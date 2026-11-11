@@ -50,7 +50,8 @@ MISSING_CODES: frozenset[str] = frozenset({"-2", "-3", ""})
 MIN_YEAR  = 2014   # earliest year in our cache
 MAX_LOOKBACK = 5   # years before closure to search
 
-LEVEL_LABELS   = {"1": "4yr+", "2": "2-4yr", "3": "<2yr"}
+LEVEL_LABELS         = {"1": "4yr+", "2": "2-4yr", "3": "<2yr"}
+PROGRAM_LEVEL_LABELS = {"1": "4-year or above", "2": "2-year", "3": "Less than 2-year"}
 CONTROL_LABELS = {"1": "public", "2": "nonprofit", "3": "for-profit"}
 
 # IPEDS sector codes → human-readable category (Burchart / SHEEO distinction)
@@ -201,6 +202,7 @@ ENRICHED_FIELDS = [
     # Human-readable sector label (SHEEO / Burchart "traditional college" distinction)
     "institution_category",
     "is_traditional_college",
+    "program_level",
     "credential_level",
     "enrollment_headcount_total",
     # IPEDS official size category (INSTSIZE): 1=Under 1,000; 2=1,000-4,999; 3=5,000-9,999; 4=10,000-19,999; 5=20,000+
@@ -239,7 +241,7 @@ def _empty_ipeds() -> dict:
         "unitid": "", "ipeds_institution_name": "", "ipeds_state": "",
         "iclevel": "", "iclevel_label": "", "control": "", "control_label": "",
         "sector": "", "institution_category": "", "is_traditional_college": "",
-        "credential_level": "",
+        "program_level": "", "credential_level": "",
         "enrollment_headcount_total": "", "ipeds_size_code": "", "enrollment_band": "",
         "ipeds_year": "",
     }
@@ -262,6 +264,7 @@ def _ipeds_from_row(row: dict) -> dict:
         "sector":                    sector,
         "institution_category":      SECTOR_LABELS.get(sector, ""),
         "is_traditional_college":    "true" if sector in TRADITIONAL_SECTORS else "false",
+        "program_level":             PROGRAM_LEVEL_LABELS.get(level, ""),
         "credential_level":          CREDENTIAL_LEVEL_LABELS.get(row.get("highest_degree", "").strip(), ""),
         "enrollment_headcount_total": enroll,
         "ipeds_size_code":           size_code,

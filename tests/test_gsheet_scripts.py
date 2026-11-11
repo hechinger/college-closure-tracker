@@ -102,6 +102,7 @@ class TestLoadRows:
         assert len(pgs._load_rows(p, cols, min_year=None)) == 3  # header + 2
 
 
+
 class TestLatestEventsCsv:
     def test_picks_latest_by_name(self, tmp_path):
         (tmp_path / "fsa_closure_events_2024-01-01.csv").write_text(
