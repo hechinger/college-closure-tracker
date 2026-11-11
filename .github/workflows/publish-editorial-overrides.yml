@@ -26,6 +26,29 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: github-actions-sheets@project-d5e32b84-d94f-446f-9b5.iam.gserviceaccount.com
 
+      - name: Download FSA weekly closed-school search file
+        run: python scripts/download_weekly_closed_school_search_file.py
+
+      - name: Download WSF from GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/wsf
+          gh release download wsf-current \
+            --pattern "schfile_access_format_*.zip" \
+            --dir /tmp/wsf \
+            --repo ${{ github.repository }}
+          WSF_ZIP=$(ls /tmp/wsf/schfile_access_format_*.zip | head -1)
+          WSF_DATE=$(basename "$WSF_ZIP" | grep -oP '\d{8}' | head -1)
+          WSF_DATE_ISO="${WSF_DATE:0:4}-${WSF_DATE:4:2}-${WSF_DATE:6:2}"
+          mkdir -p "data/raw/weekly_school_file/${WSF_DATE_ISO}/access"
+          mv "$WSF_ZIP" "data/raw/weekly_school_file/${WSF_DATE_ISO}/access/"
+
+      - name: Run parse and crosswalk
+        run: |
+          python scripts/parse_federal_sources.py
+          python scripts/build_ipeds_crosswalk.py
+
       - name: Pull overrides from Google Sheet
         env:
           CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
