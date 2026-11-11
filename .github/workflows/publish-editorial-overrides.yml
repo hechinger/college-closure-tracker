@@ -2,6 +2,11 @@ name: Publish editorial overrides
 
 on:
   workflow_dispatch:        # manually triggered from the Actions tab after editor review
+    inputs:
+      sheet_id:
+        description: "Optional staging Sheet ID. When set, reads/writes there and commits nothing."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -62,7 +67,7 @@ jobs:
 
       - name: Pull overrides from Google Sheet
         env:
-          CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
+          CLOSURE_LIST_SHEET_ID: ${{ inputs.sheet_id || secrets.CLOSURE_LIST_SHEET_ID }}
         run: |
           python scripts/pull_gsheet_overrides.py \
             --sheet "$CLOSURE_LIST_SHEET_ID" \
@@ -76,12 +81,13 @@ jobs:
 
       - name: Update Sheet published tab
         env:
-          CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
+          CLOSURE_LIST_SHEET_ID: ${{ inputs.sheet_id || secrets.CLOSURE_LIST_SHEET_ID }}
         run: |
           python scripts/push_to_gsheet.py \
             --sheet "$CLOSURE_LIST_SHEET_ID" --tab published
 
       - name: Commit overrides and push
+        if: ${{ !inputs.sheet_id }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
