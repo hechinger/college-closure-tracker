@@ -62,10 +62,21 @@ def _inst_event(**kw) -> dict:
         "is_suspicious_location": "false", "is_traditional_college": "true",
         "closure_type": "institutional_closure",
         "closure_type_basis": "main campus; public nonprofit",
+        "review_status": "resolved", "review_required": "false",
+        "publication_decision": "include_institution",
+        "location_operations_ceased": "true", "parent_continued": "false",
+        "fsa_closed_date_iso": "2020-06-01",
+        "published_closed_date_iso": "2020-06-01",
         "match_method": "matched_opeid8_yr2019",
         "unitid": "111111",
     }
     defaults.update(kw)
+    if "closure_event_id" not in kw:
+        defaults["closure_event_id"] = f"fsa:{defaults['opeid8']}:{defaults['closed_date_iso']}"
+    if "fsa_closed_date_iso" not in kw:
+        defaults["fsa_closed_date_iso"] = defaults["closed_date_iso"]
+    if "published_closed_date_iso" not in kw:
+        defaults["published_closed_date_iso"] = defaults["closed_date_iso"]
     return defaults
 
 
@@ -83,10 +94,21 @@ def _campus_event(**kw) -> dict:
         "is_suspicious_location": "false", "is_traditional_college": "true",
         "closure_type": "branch_closure",
         "closure_type_basis": "OPEID suffix != 00",
+        "review_status": "resolved", "review_required": "false",
+        "publication_decision": "include_campus",
+        "location_operations_ceased": "true", "parent_continued": "true",
+        "fsa_closed_date_iso": "2019-05-01",
+        "published_closed_date_iso": "2019-05-01",
         "match_method": "matched_opeid8_yr2018",
         "unitid": "111112",
     }
     defaults.update(kw)
+    if "closure_event_id" not in kw:
+        defaults["closure_event_id"] = f"fsa:{defaults['opeid8']}:{defaults['closed_date_iso']}"
+    if "fsa_closed_date_iso" not in kw:
+        defaults["fsa_closed_date_iso"] = defaults["closed_date_iso"]
+    if "published_closed_date_iso" not in kw:
+        defaults["published_closed_date_iso"] = defaults["closed_date_iso"]
     return defaults
 
 
@@ -215,24 +237,27 @@ class TestTabColumns:
 
 class TestPublishedSchema:
     def test_exact_column_count(self):
-        assert len(pgs._PUBLIC_COLS) == 17
+        assert len(pgs._PUBLIC_COLS) == 23
 
     def test_first_12_columns_in_order(self):
         expected = [
             "opeid8", "school_name", "city", "state",
-            "control_label", "program_level", "credential_level",
+            "control_label", "institution_category", "program_level", "credential_level",
             "enrollment_band", "enrollment_headcount_total",
             "closed_date_iso", "closed_year", "closure_type",
         ]
-        assert pgs._PUBLIC_COLS[:12] == expected
+        assert pgs._PUBLIC_COLS[:13] == expected
 
     def test_new_metadata_columns_appended(self):
-        new_cols = pgs._PUBLIC_COLS[12:]
+        new_cols = pgs._PUBLIC_COLS[13:]
         assert "closure_scope" in new_cols
         assert "classification_basis" in new_cols
         assert "closure_event_id" in new_cols
         assert "opeid6" in new_cols
         assert "unitid" in new_cols
+        assert "parent_continued" in new_cols
+        assert "fsa_closed_date_iso" in new_cols
+        assert "date_evidence_url" in new_cols
 
     def test_redundant_columns_not_in_published(self):
         for col in ("parent_institution_continued", "include_institution_totals",
@@ -250,6 +275,16 @@ class TestPublishedSchema:
 # ---------------------------------------------------------------------------
 
 class TestFilterPublishedRows:
+    # --- review status gate ---
+
+    def test_auto_resolved_publishes(self):
+        rows = [_inst_event(review_status="auto_resolved")]
+        assert len(pgs._filter_published_rows(rows)) == 1
+
+    def test_pending_new_closure_does_not_publish(self):
+        rows = [_inst_event(review_status="pending", review_required="true")]
+        assert pgs._filter_published_rows(rows) == []
+
     # --- institution scope ---
 
     def test_institutional_closure_becomes_institution_scope(self):
@@ -281,12 +316,12 @@ class TestFilterPublishedRows:
         rows = [_inst_event()]
         r = pgs._filter_published_rows(rows)[0]
         assert r["closure_scope"] == "institution"
-        assert r["closure_event_id"].startswith("institution:")
+        assert r["closure_event_id"].startswith("fsa:")
 
     def test_institution_event_id_format(self):
         rows = [_inst_event(opeid6="001002", closed_date_iso="2020-06-01")]
         r = pgs._filter_published_rows(rows)[0]
-        assert r["closure_event_id"] == "institution:001002:2020-06-01"
+        assert r["closure_event_id"] == "fsa:00100200:2020-06-01"
 
     # --- campus scope ---
 
@@ -305,14 +340,14 @@ class TestFilterPublishedRows:
                                match_method="matched_opeid8_yr2018", iclevel="1")
         r = pgs._filter_published_rows([branch])[0]
         assert r["closure_scope"] == "campus"
-        assert r["closure_event_id"].startswith("campus:")
+        assert r["closure_event_id"].startswith("fsa:")
 
     def test_campus_event_id_format(self):
         branch = _campus_event(opeid8="00700001", opeid6="007000",
                                closed_date_iso="2019-05-01",
                                match_method="matched_opeid8_yr2018", iclevel="1")
         r = pgs._filter_published_rows([branch])[0]
-        assert r["closure_event_id"] == "campus:00700001:2019-05-01"
+        assert r["closure_event_id"] == "fsa:00700001:2019-05-01"
 
     def test_campus_published_closure_type_normalized(self):
         branch = _campus_event(opeid8="00700001", opeid6="007000",
@@ -336,24 +371,31 @@ class TestFilterPublishedRows:
         assert pgs._filter_published_rows(rows) == []
 
     def test_branch_no_ipeds_match_excluded(self):
-        branch = _campus_event(match_method="no_match", iclevel="")
+        branch = _campus_event(match_method="no_match", iclevel="",
+                               review_status="pending", review_required="true",
+                               publication_decision="")
         assert pgs._filter_published_rows([branch]) == []
 
     def test_branch_no_coverage_excluded(self):
-        branch = _campus_event(match_method="no_ipeds_coverage", iclevel="")
+        branch = _campus_event(match_method="no_ipeds_coverage", iclevel="",
+                               review_status="pending", review_required="true",
+                               publication_decision="")
         assert pgs._filter_published_rows([branch]) == []
 
     def test_branch_matched_but_no_iclevel_excluded(self):
-        branch = _campus_event(match_method="matched_opeid8_yr2018", iclevel="")
+        branch = _campus_event(match_method="matched_opeid8_yr2018", iclevel="",
+                               review_status="pending", review_required="true",
+                               publication_decision="")
         assert pgs._filter_published_rows([branch]) == []
 
     def test_full_system_shutdown_branch_excluded(self):
-        # Parent's main campus also closed → branch should not be a standalone campus event
+        # A branch cannot publish when its resolved facts say the parent did not continue.
         parent = _inst_event(opeid8="00100200", opeid6="001002",
                              closure_type="institutional_closure",
                              closed_date_iso="2020-06-01", closed_year="2020")
         branch = _campus_event(opeid8="00100201", opeid6="001002",
                                closure_type="branch_closure",
+                               parent_continued="false",
                                match_method="matched_opeid8_yr2018", iclevel="1",
                                closed_date_iso="2020-04-01", closed_year="2020")
         result = pgs._filter_published_rows([parent, branch])
@@ -436,7 +478,10 @@ class TestRegressionNamedRecords:
 
     def _branch_no_match(self, opeid8: str, opeid6: str) -> dict:
         return _campus_event(opeid8=opeid8, opeid6=opeid6,
-                             match_method="no_match", iclevel="")
+                             match_method="no_match", iclevel="",
+                             review_status="pending", review_required="true",
+                             publication_decision="",
+                             location_operations_ceased="unknown")
 
     def _branch_matched_postsec(self, opeid8: str, opeid6: str, iclevel: str) -> dict:
         return _campus_event(opeid8=opeid8, opeid6=opeid6,
@@ -455,24 +500,28 @@ class TestRegressionNamedRecords:
 
     def test_concordia_no_coverage_excluded(self):
         rows = [_campus_event(opeid8="10166659", opeid6="101666",
-                              match_method="no_ipeds_coverage", iclevel="")]
+                              match_method="no_ipeds_coverage", iclevel="",
+                              review_status="pending", review_required="true",
+                              publication_decision="")]
         result = pgs._filter_published_rows(rows)
         assert not any(r["opeid8"] == "10166659" for r in result)
 
     def test_branch_matched_no_iclevel_excluded(self):
         rows = [_campus_event(opeid8="10166659", opeid6="101666",
-                              match_method="matched_opeid8_yr2019", iclevel="")]
+                              match_method="matched_opeid8_yr2019", iclevel="",
+                              review_status="pending", review_required="true",
+                              publication_decision="")]
         result = pgs._filter_published_rows(rows)
         assert not any(r["opeid8"] == "10166659" for r in result)
 
-    def test_genuine_branch_with_evidence_is_publishable(self):
-        """A branch with IPEDS match + iclevel + independent parent must be publishable."""
+    def test_genuine_branch_with_resolved_operational_evidence_is_publishable(self):
+        """IPEDS identity alone is insufficient; the resolved facts make it publishable."""
         branch = self._branch_matched_postsec("00800001", "008000", "1")
         result = pgs._filter_published_rows([branch])
         assert any(r["opeid8"] == "00800001" for r in result)
 
     def test_genuine_institution_closure_is_publishable(self):
-        """A main campus institutional closure must appear as published institution row."""
+        """A resolved institution decision appears in published."""
         result = pgs._filter_published_rows([_inst_event()])
         assert len(result) == 1
         assert result[0]["closure_scope"] == "institution"
@@ -644,12 +693,82 @@ class TestByStateReconciliation:
 # Tests for push_to_gsheet tab columns (TAB_COLUMNS integration)
 # ---------------------------------------------------------------------------
 
+class TestOverridesQueue:
+    def test_new_review_candidate_added_as_pending(self):
+        event = _inst_event(
+            review_status="pending", review_required="true",
+            publication_decision="", evidence_fingerprint="abc",
+            review_reason="operational_closure_unverified",
+        )
+        data = pgs._build_overrides_queue([event])
+        row = dict(zip(data[0], data[1]))
+        assert row["closure_event_id"] == event["closure_event_id"]
+        assert row["review_status"] == "pending"
+
+    def test_editorial_fields_preserved_on_refresh(self):
+        event = _inst_event(
+            review_status="resolved", review_required="false",
+            evidence_fingerprint="same",
+        )
+        existing = [{
+            "closure_event_id": event["closure_event_id"],
+            "opeid8": event["opeid8"],
+            "review_status": "resolved",
+            "publication_decision": "include_institution",
+            "closure_type": "institutional_closure",
+            "closure_type_basis": "Editor evidence",
+            "editor_note": "keep me",
+            "evidence_fingerprint": "same",
+        }]
+        data = pgs._build_overrides_queue([event], existing)
+        row = dict(zip(data[0], data[1]))
+        assert row["closure_type_basis"] == "Editor evidence"
+        assert row["editor_note"] == "keep me"
+        assert row["review_status"] == "resolved"
+
+    def test_changed_fingerprint_forces_re_review(self):
+        event = _inst_event(
+            review_status="pending", review_required="true",
+            evidence_fingerprint="new",
+        )
+        existing = [{
+            "closure_event_id": event["closure_event_id"],
+            "opeid8": event["opeid8"],
+            "review_status": "resolved",
+            "publication_decision": "include_institution",
+            "closure_type": "institutional_closure",
+            "closure_type_basis": "Old evidence",
+            "evidence_fingerprint": "old",
+        }]
+        data = pgs._build_overrides_queue([event], existing)
+        row = dict(zip(data[0], data[1]))
+        assert row["review_status"] == "needs_re_review"
+        assert row["publication_decision"] == "include_institution"
+
+
+class TestPublishBundleValidation:
+    def test_valid_bundle_reconciles(self):
+        pub = pgs._filter_published_rows([_inst_event(), _campus_event(opeid8="00100201")])
+        pgs._validate_publish_bundle(
+            pub, pgs._build_by_year_data(pub), pgs._build_by_state_data(pub)
+        )
+
+    def test_bad_year_total_fails_before_write(self):
+        pub = pgs._filter_published_rows([_inst_event()])
+        by_year = pgs._build_by_year_data(pub)
+        by_year[1][12] += 1
+        with pytest.raises(ValueError, match="by_year totals"):
+            pgs._validate_publish_bundle(pub, by_year, pgs._build_by_state_data(pub))
+
+
 class TestPush:
     def _make_mock_sheet(self, existing_opeid8s=None):
         ws = MagicMock()
         ws.col_values.return_value = ["opeid8"] + list(existing_opeid8s or [])
+        overrides_ws = MagicMock()
+        overrides_ws.get_all_records.return_value = []
         sh = MagicMock()
-        sh.worksheet.return_value = ws
+        sh.worksheet.side_effect = lambda tab: overrides_ws if tab == "overrides" else ws
         gc = MagicMock()
         gc.open_by_key.return_value = sh
         return gc, sh, ws
@@ -685,7 +804,7 @@ class TestPush:
         ws.clear.assert_called_once()
         ws.update.assert_called_once()
 
-    def test_location_administrative_excluded_from_closure_list(self, tmp_path):
+    def test_location_administrative_retained_in_complete_closure_list(self, tmp_path):
         rows = _sample_events() + [
             _inst_event(opeid8="99999900", opeid6="999999",
                         closure_type="location_administrative",
@@ -701,7 +820,7 @@ class TestPush:
 
         call_data = ws.update.call_args[0][1]
         opeid8s = [r[0] for r in call_data[1:]]
-        assert "99999900" not in opeid8s
+        assert "99999900" in opeid8s
 
 
 # ---------------------------------------------------------------------------
@@ -753,10 +872,13 @@ class TestLoadRowsFiltering:
 
 class TestValidateRows:
     def test_valid_row_passes(self):
-        rows = [{"opeid8": "00219300", "school_name": "Mount Ida College",
-                 "state": "MA", "closed_date_iso": "2018-05-01",
-                 "closure_type": "merger_absorption",
-                 "closure_type_basis": "Editorial", "editor_note": "Mount Ida"}]
+        rows = [{"closure_event_id": "fsa:00219300:2018-05-09",
+                 "opeid8": "00219300", "school_name": "Mount Ida College",
+                 "state": "MA", "fsa_closed_date_iso": "2018-05-09",
+                 "review_status": "resolved", "publication_decision": "include_institution",
+                 "closure_type": "institutional_closure",
+                 "closure_type_basis": "Editorial: operations ceased",
+                 "location_operations_ceased": "true", "parent_continued": "false"}]
         valid, errors = pgso._validate_rows(rows)
         assert len(valid) == 1
         assert errors == 0
@@ -768,22 +890,29 @@ class TestValidateRows:
         assert len(valid) == 0
         assert errors == 1
 
-    def test_empty_closure_type_skipped(self):
-        rows = [{"opeid8": "00219300", "closure_type": "",
-                 "closure_type_basis": "x", "editor_note": ""}]
+    def test_pending_row_does_not_require_closure_type(self):
+        rows = [{"closure_event_id": "fsa:00219300:2018-05-09",
+                 "opeid8": "00219300", "review_status": "pending",
+                 "closure_type": "", "closure_type_basis": ""}]
         valid, errors = pgso._validate_rows(rows)
-        assert errors == 1
+        assert len(valid) == 1
+        assert errors == 0
 
     def test_unknown_closure_type_skipped(self):
-        rows = [{"opeid8": "00219300", "closure_type": "banana",
+        rows = [{"opeid8": "00219300", "review_status": "resolved",
+                 "publication_decision": "exclude", "closure_type": "banana",
                  "closure_type_basis": "x", "editor_note": ""}]
         valid, errors = pgso._validate_rows(rows)
         assert errors == 1
 
     def test_all_valid_event_types_accepted(self):
         from classify_closure_events import EVENT_TYPES
-        rows = [{"opeid8": f"0000000{i}", "closure_type": et,
-                 "closure_type_basis": "x", "editor_note": ""}
+        evidence_types = {"merger_absorption", "system_consolidation",
+                          "identifier_replacement", "affiliation_or_governance_change"}
+        rows = [{"opeid8": f"0000000{i}", "review_status": "resolved",
+                 "publication_decision": "exclude", "closure_type": et,
+                 "closure_type_basis": "x",
+                 "date_evidence_url": "https://example.com" if et in evidence_types else ""}
                 for i, et in enumerate(EVENT_TYPES)]
         valid, errors = pgso._validate_rows(rows)
         assert len(valid) == len(EVENT_TYPES)
@@ -791,8 +920,9 @@ class TestValidateRows:
 
     def test_mixed_valid_and_invalid(self):
         rows = [
-            {"opeid8": "00219300", "closure_type": "merger_absorption",
-             "closure_type_basis": "x", "editor_note": ""},
+            {"opeid8": "00219300", "review_status": "resolved",
+             "publication_decision": "exclude", "closure_type": "merger_absorption",
+             "closure_type_basis": "x", "date_evidence_url": "https://example.com"},
             {"opeid8": "", "closure_type": "institutional_closure",
              "closure_type_basis": "x", "editor_note": ""},
         ]
@@ -801,15 +931,14 @@ class TestValidateRows:
         assert errors == 1
 
     def test_output_has_all_fields(self):
-        rows = [{"opeid8": "00219300", "school_name": "Mount Ida College",
-                 "state": "MA", "closed_date_iso": "2018-05-01",
-                 "closure_type": "merger_absorption",
-                 "closure_type_basis": "Editorial: merged", "editor_note": "Mount Ida"}]
+        rows = [{"closure_event_id": "fsa:00219300:2018-05-09",
+                 "opeid8": "00219300", "school_name": "Mount Ida College",
+                 "state": "MA", "review_status": "resolved",
+                 "publication_decision": "exclude", "closure_type": "merger_absorption",
+                 "closure_type_basis": "Editorial: merged",
+                 "date_evidence_url": "https://example.com"}]
         valid, _ = pgso._validate_rows(rows)
-        assert set(valid[0].keys()) == {
-            "opeid8", "school_name", "state", "closed_date_iso",
-            "closure_type", "closure_type_basis", "editor_note",
-        }
+        assert set(valid[0].keys()) == set(pgso.OVERRIDES_FIELDS)
 
 
 # ---------------------------------------------------------------------------
@@ -831,3 +960,138 @@ class TestWriteCsv:
         out = tmp_path / "subdir" / "overrides.csv"
         pgso._write_csv([], out)
         assert out.exists()
+
+
+class TestMergeLocalOverrides:
+    def test_local_rows_added_sheet_wins(self, tmp_path):
+        p = tmp_path / "ov.csv"
+        p.write_text(
+            "closure_event_id,review_status,closure_type\n"
+            "fsa:00100200:2020-01-01,resolved,institutional_closure\n"
+            "fsa:00200300:2021-01-01,resolved,merger_absorption\n", encoding="utf-8")
+        sheet = [{"closure_event_id": "fsa:00100200:2020-01-01", "review_status": "pending", "closure_type": ""}]
+        merged = pgs._merge_local_overrides(sheet, p)
+        by_id = {r["closure_event_id"]: r for r in merged}
+        assert by_id["fsa:00100200:2020-01-01"]["review_status"] == "pending"   # Sheet wins
+        assert by_id["fsa:00200300:2021-01-01"]["closure_type"] == "merger_absorption"
+
+    def test_missing_local_file_is_noop(self, tmp_path):
+        rows = [{"closure_event_id": "x"}]
+        assert pgs._merge_local_overrides(rows, tmp_path / "none.csv") == rows
+
+
+class TestOverridesQueueStagingFixes:
+    """Regressions from the 2026-11-11 staging run."""
+
+    def _event(self, eid, opeid8, **kw):
+        e = {"closure_event_id": eid, "opeid8": opeid8, "closed_year": "2018",
+             "review_required": "true", "review_status": "pending"}
+        e.update(kw)
+        return e
+
+    def _rows(self, queue):
+        header = queue[0]
+        return [dict(zip(header, r)) for r in queue[1:]]
+
+    def test_pipeline_resolved_event_without_editorial_row_is_omitted(self):
+        ev = [self._event("fsa:00100200:2018-06-01", "00100200",
+                          review_required="false", review_status="resolved")]  # reinstated
+        assert self._rows(pgs._build_overrides_queue(ev, [])) == []
+
+    def test_editor_resolved_event_stays(self):
+        ev = [self._event("fsa:00100200:2018-06-01", "00100200",
+                          review_required="false", review_status="resolved")]
+        old = [{"closure_event_id": "fsa:00100200:2018-06-01", "review_status": "resolved",
+                "closure_type": "merger_absorption", "publication_decision": "exclude"}]
+        rows = self._rows(pgs._build_overrides_queue(ev, old))
+        assert rows[0]["closure_type"] == "merger_absorption"
+
+    def test_legacy_row_superseded_by_event_keyed_row_is_dropped(self):
+        ev = [self._event("fsa:00219300:2018-05-09", "00219300", review_required="false",
+                          review_status="resolved")]
+        existing = [
+            {"closure_event_id": "fsa:00219300:2018-05-09", "opeid8": "00219300",
+             "review_status": "resolved", "closure_type": "institutional_closure"},
+            {"closure_event_id": "", "opeid8": "219300", "closure_type": "merger_absorption"},
+            {"closure_event_id": "", "opeid8": "05555500", "closure_type": "branch_closure"},
+        ]
+        rows = self._rows(pgs._build_overrides_queue(ev, existing))
+        assert [r["opeid8"] for r in rows if not r["closure_event_id"]] == ["05555500"]
+
+
+class TestOverridesQueueSelfHealing:
+    def test_decisionless_row_from_earlier_push_is_dropped(self):
+        ev = [{"closure_event_id": "fsa:03089400:2005-09-26", "opeid8": "03089400", "closed_year": "2005",
+               "review_required": "false", "review_status": "resolved"}]
+        stale = [{"closure_event_id": "fsa:03089400:2005-09-26", "review_status": "resolved",
+                  "closure_type": "", "publication_decision": ""}]
+        assert pgs._build_overrides_queue(ev, stale)[1:] == []
+
+
+class TestMergersTab:
+    def test_lists_confirmed_mergers_and_affiliations_only(self, tmp_path):
+        import csv as _csv
+        p = tmp_path / "events.csv"
+        fields = ["closure_event_id", "school_name", "city", "state", "opeid8", "control_label", "program_level",
+                  "fsa_closed_date_iso", "closed_date_iso", "review_status", "closure_type",
+                  "closure_type_basis", "date_evidence_url", "replacement_opeid8"]
+        rows = [
+            {"closure_event_id": "a", "school_name": "Watkins", "fsa_closed_date_iso": "2020-06-30",
+             "review_status": "resolved", "closure_type": "merger_absorption", "date_evidence_url": "u1"},
+            {"closure_event_id": "b", "school_name": "EDS", "fsa_closed_date_iso": "2017-06-30",
+             "review_status": "resolved", "closure_type": "affiliation_or_governance_change"},
+            {"closure_event_id": "c", "school_name": "Mills", "fsa_closed_date_iso": "2022-06-30",
+             "review_status": "pending", "closure_type": "institutional_closure"},  # possible merger, unconfirmed
+        ]
+        with p.open("w", encoding="utf-8", newline="") as fh:
+            w = _csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        data = pgs._build_mergers_data(p)
+        assert data[0] == pgs.MERGERS_HEADER
+        got = [dict(zip(data[0], r)) for r in data[1:]]
+        assert [(g["school_name"], g["outcome"]) for g in got] == [("Watkins", "merger"), ("EDS", "affiliation")]
+        assert got[0]["evidence_url"] == "u1" and got[0]["fsa_closed_year"] == "2020"
+
+
+class TestInstitutionOnlyPublishedTab:
+    def test_split_by_scope(self):
+        rows = [{"closure_scope": "institution", "x": 1}, {"closure_scope": "campus", "x": 2},
+                {"closure_scope": "institution", "x": 3}]
+        inst, camp = pgs._split_by_scope(rows)
+        assert [r["x"] for r in inst] == [1, 3] and [r["x"] for r in camp] == [2]
+
+    def test_published_tab_gets_institutions_and_campus_tab_gets_campuses(self, tmp_path):
+        _write_events_csv(tmp_path, _sample_events())
+        written: dict[str, list] = {}
+
+        class _WS:
+            def __init__(self, name):
+                self.name = name
+            def clear(self):
+                pass
+            def update(self, _a1, data):
+                written[self.name] = data
+            def get_all_records(self, **_kw):
+                return []
+            def col_values(self, _i):
+                return []
+
+        class _SH:
+            def worksheet(self, name):
+                return _WS(name)
+            def add_worksheet(self, title, rows, cols):
+                return _WS(title)
+
+        class _GC:
+            def open_by_key(self, _k):
+                return _SH()
+
+        with patch.object(pgs, "DERIVED", tmp_path), \
+             patch("push_to_gsheet._get_gspread_client", return_value=_GC()):
+            pgs.push("FAKE_SHEET_ID", "published")
+        pub_hdr, *pub_rows = written["published"]
+        camp_hdr, *camp_rows = written[pgs.CAMPUS_TAB]
+        scope = pub_hdr.index("closure_scope")
+        assert pub_rows and all(r[scope] == "institution" for r in pub_rows)
+        assert all(r[camp_hdr.index("closure_scope")] == "campus" for r in camp_rows)

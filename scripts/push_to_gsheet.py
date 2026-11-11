@@ -24,20 +24,15 @@ Outputs
 
 Published-tab filtering contract
 ---------------------------------
-  institution rows: approach2_main_campus_only="true" AND closure_type in
-      {institutional_closure, system_consolidation, for_profit_closure}.
-      Published closure_type normalised to "institution_closure".
+  Publication is decision-driven. A row must be resolved (editorial) or
+  auto_resolved (frozen base table meeting the automatic evidence standard),
+  not require review, and carry one of these internally consistent decisions:
 
-  campus rows: closure_type="branch_closure" AND IPEDS match confirmed AND
-      iclevel in {1,2,3} AND parent OPEID6's main campus NOT in this dataset.
-      Published closure_type normalised to "campus_closure".
+  include_institution: location_operations_ceased=true, parent_continued=false
+  include_campus:      location_operations_ceased=true, parent_continued=true
 
-  Excluded: location_administrative, unclassified, merger_absorption, and any
-      branch whose parent institution also fully closed in this dataset.
-
-  merger_absorption is excluded by default.  RT11 record-holder evidence
-  flags a possible merger but does not prove cessation of operations.
-  Set review_required=true and reclassify via editorial override to include.
+  No public scope is inferred from name text, OPEID suffix, IPEDS matching, the
+  absence of a parent in the closure file, or RT11 record custody.
 """
 
 from __future__ import annotations
@@ -51,8 +46,11 @@ import google.auth
 import gspread
 from google.auth.transport.requests import Request as _AuthRequest
 
+from pull_gsheet_overrides import OVERRIDES_FIELDS
+
 PROJECT = Path(__file__).resolve().parent.parent
 DERIVED = PROJECT / "data" / "derived"
+LOCAL_OVERRIDES = PROJECT / "data" / "manual" / "closure_type_overrides.csv"
 NEW_COUNT_FILE = DERIVED / "new_closures_count.txt"
 
 # ---------------------------------------------------------------------------
@@ -61,14 +59,21 @@ NEW_COUNT_FILE = DERIVED / "new_closures_count.txt"
 
 # Internal review tab: editors see all classification context.
 _EDITORIAL_COLS = [
-    "opeid8", "school_name", "city", "state",
+    "opeid8", "closure_event_id", "school_name", "city", "state",
     "control_label", "iclevel_label", "institution_category",
     "program_level", "credential_level",
     "enrollment_band", "enrollment_headcount_total",
-    "closed_date_iso", "closed_year",
+    "closed_date_iso", "closed_year", "fsa_closed_date_iso",
+    "verified_closed_date_iso", "published_closed_date_iso",
+    "date_basis", "date_evidence_url",
     "is_main_campus", "is_suspicious_location",
     "approach2_main_campus_only", "is_traditional_college",
-    "closure_type", "closure_type_basis",
+    "closure_type", "closure_type_basis", "candidate_closure_scope",
+    "location_operations_ceased", "operations_ceased_basis",
+    "parent_continued", "parent_continued_basis",
+    "replacement_opeid8", "replacement_effective_date_iso",
+    "record_holder_desc", "review_required", "review_reason",
+    "review_status", "publication_decision", "evidence_fingerprint",
     "match_method", "unitid", "opeid6",
 ]
 
@@ -79,12 +84,14 @@ _EDITORIAL_COLS = [
 # are all derivable from closure_scope and are omitted.
 _PUBLIC_COLS = [
     "opeid8", "school_name", "city", "state",
-    "control_label", "program_level", "credential_level",
+    "control_label", "institution_category", "program_level", "credential_level",
     "enrollment_band", "enrollment_headcount_total",
     "closed_date_iso", "closed_year", "closure_type",
     "opeid6", "unitid",
-    "closure_scope",
+    "closure_scope", "parent_continued",
     "classification_basis", "closure_event_id",
+    "fsa_closed_date_iso", "verified_closed_date_iso",
+    "date_basis", "date_evidence_url",
 ]
 
 TAB_COLUMNS: dict[str, list[str]] = {
@@ -92,9 +99,20 @@ TAB_COLUMNS: dict[str, list[str]] = {
     "published":    _PUBLIC_COLS,
 }
 
+_OVERRIDE_PIPELINE_FIELDS = frozenset({
+    "closure_event_id", "opeid8", "school_name", "state",
+    "fsa_closed_date_iso", "review_reason", "candidate_closure_scope",
+    "replacement_opeid8", "replacement_effective_date_iso",
+    "evidence_fingerprint",
+})
+
 # ---------------------------------------------------------------------------
 # Publication filters
 # ---------------------------------------------------------------------------
+
+# First closure year in published/by_year/by_state and the review queue.
+# 1996 matches Kelchen et al.'s window; IPEDS history starts in 1995.
+PUBLISHED_MIN_YEAR = 1996
 
 # Internal classifier types that map to institution-scope published rows.
 _INSTITUTION_TYPES = frozenset({
@@ -106,17 +124,12 @@ _INSTITUTION_TYPES = frozenset({
 # Internal classifier types that may become campus-scope published rows.
 _CAMPUS_TYPES = frozenset({"branch_closure"})
 
-# Types excluded from published entirely.
-# merger_absorption: RT11 evidence flags a candidate but does not prove
-# cessation of operations; requires editorial override to publish.
-_EXCLUDE_FROM_PUBLISHED = frozenset({
-    "location_administrative",
-    "unclassified",
-    "merger_absorption",
-})
+# resolved = editorial decision; auto_resolved = frozen base-table row meeting
+# the automatic evidence standard. New closures never get auto_resolved.
+_PUBLISHABLE_STATUSES = frozenset({"resolved", "auto_resolved"})
 
-# Types excluded from closure_list (non-campus administrative sites).
-_EXCLUDE_FROM_CLOSURE_LIST = frozenset({"location_administrative"})
+# closure_list is the complete candidate ledger; nothing is silently hidden.
+_EXCLUDE_FROM_CLOSURE_LIST = frozenset()
 
 # match_method prefixes that confirm a resolved IPEDS identity.
 _MATCHED_PREFIXES = ("matched_opeid8_", "matched_opeid6_")
@@ -174,68 +187,154 @@ def _load_rows(
     return result
 
 
-def _filter_published_rows(raw: list[dict], min_year: int = 2000) -> list[dict]:
-    """
-    Pure function: apply publication filters and derive all published fields.
+def _has_editorial_decision(row: dict | None) -> bool:
+    """True when an overrides row carries an editor's decision or note."""
+    return bool(row) and any(
+        str(row.get(f, "")).strip() for f in ("closure_type", "publication_decision", "editor_note", "reviewed_by")
+    )
 
-    Returns a list of dicts with every key in _PUBLIC_COLS populated.
-    Testable without touching the filesystem.
 
-    Gate for campus rows:
-      1. closure_type = "branch_closure"
-      2. IPEDS match confirmed (match_method starts with "matched_")
-      3. iclevel in {"1","2","3"} — postsecondary identity confirmed
-      4. OPEID6's main campus NOT also in this closure dataset — parent continued
-    """
-    raw = [r for r in raw if r.get("closed_year", "0") >= str(min_year)]
+def _build_overrides_queue(
+    events: list[dict],
+    existing_rows: list[dict] | None = None,
+    min_year: int = PUBLISHED_MIN_YEAR,
+) -> list[list[str]]:
+    """Merge current review candidates with preserved editorial decisions."""
+    existing_rows = existing_rows or []
+    existing_by_event: dict[str, dict] = {}
+    legacy_rows: list[dict] = []
+    for row in existing_rows:
+        event_id = str(row.get("closure_event_id", "")).strip()
+        if event_id:
+            existing_by_event[event_id] = {k: str(v) for k, v in row.items()}
+        else:
+            legacy_rows.append({k: str(v) for k, v in row.items()})
 
-    # Build set of OPEID6s whose institution-level (approach2) campus also closed.
-    closed_main_opeid6s: set[str] = set()
-    for r in raw:
-        if (r.get("approach2_main_campus_only") == "true"
-                and r.get("closure_type", "") in _INSTITUTION_TYPES):
-            opeid6 = r.get("opeid6", "")
-            if opeid6:
-                closed_main_opeid6s.add(opeid6)
-
-    pub: list[dict] = []
-    for r in raw:
-        ctype = r.get("closure_type", "")
-        opeid8 = r.get("opeid8", "")
-        opeid6 = r.get("opeid6", "")
-        closed_date = r.get("closed_date_iso", "")
-
-        if ctype in _EXCLUDE_FROM_PUBLISHED:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for event in events:
+        year = str(event.get("closed_year", ""))
+        if not year.isdigit() or int(year) < min_year:
+            continue
+        event_id = str(event.get("closure_event_id", "")).strip()
+        if not event_id:
+            continue
+        if event.get("review_required") != "true" and not _has_editorial_decision(existing_by_event.get(event_id)):
+            # Resolved by the pipeline itself (reinstatement, automatic tier or
+            # exclusion): no editorial decision to show. Rows an earlier push
+            # wrote without a decision are dropped too.
             continue
 
-        if r.get("approach2_main_campus_only") == "true" and ctype in _INSTITUTION_TYPES:
-            # Full-institution or system-level closure.
+        old = existing_by_event.get(event_id, {})
+        row = {field: str(old.get(field, "")) for field in OVERRIDES_FIELDS}
+        pipeline_values = {
+            "closure_event_id": event_id,
+            "opeid8": event.get("opeid8", ""),
+            "school_name": event.get("school_name", ""),
+            "state": event.get("state", ""),
+            "fsa_closed_date_iso": event.get("fsa_closed_date_iso", "") or event.get("closed_date_iso", ""),
+            "review_reason": event.get("review_reason", ""),
+            "candidate_closure_scope": event.get("candidate_closure_scope", ""),
+            "replacement_opeid8": event.get("replacement_opeid8", ""),
+            "replacement_effective_date_iso": event.get("replacement_effective_date_iso", ""),
+            "evidence_fingerprint": event.get("evidence_fingerprint", ""),
+        }
+        for field in _OVERRIDE_PIPELINE_FIELDS:
+            row[field] = str(pipeline_values.get(field, ""))
+
+        if not old:
+            row["review_status"] = event.get("review_status", "pending") or "pending"
+        elif (
+            old.get("review_status") == "resolved"
+            and old.get("evidence_fingerprint")
+            and old.get("evidence_fingerprint") != event.get("evidence_fingerprint")
+        ):
+            row["review_status"] = "needs_re_review"
+        elif event.get("review_status") == "needs_re_review":
+            row["review_status"] = "needs_re_review"
+
+        merged.append(row)
+        seen.add(event_id)
+
+    # Preserve editorial rows whose source event disappeared so the history is
+    # not silently erased. Mark resolved records for re-review.
+    current_ids = {str(e.get("closure_event_id", "")).strip() for e in events}
+    for event_id, old in existing_by_event.items():
+        if event_id in seen or event_id in current_ids or not _has_editorial_decision(old):
+            # Handled above, or nothing editorial worth preserving.
+            continue
+        row = {field: str(old.get(field, "")) for field in OVERRIDES_FIELDS}
+        if row.get("review_status") == "resolved":
+            row["review_status"] = "needs_re_review"
+        reason = row.get("review_reason", "")
+        row["review_reason"] = "|".join(x for x in [reason, "source_event_missing"] if x)
+        merged.append(row)
+    # Old opeid8-keyed rows are dropped once an event-keyed row for the same
+    # OPEID8 exists: that row is their migration and supersedes them.
+    migrated = {str(r.get("opeid8", "")).strip().zfill(8) for r in merged if r.get("opeid8")}
+    for old in legacy_rows:
+        if str(old.get("opeid8", "")).strip().zfill(8) in migrated:
+            continue
+        merged.append({field: str(old.get(field, "")) for field in OVERRIDES_FIELDS})
+
+    status_order = {"needs_re_review": 0, "pending": 1, "needs_more_evidence": 2, "resolved": 3}
+    merged.sort(key=lambda r: (
+        status_order.get(r.get("review_status", "pending"), 9),
+        r.get("fsa_closed_date_iso", ""),
+        r.get("opeid8", ""),
+    ), reverse=False)
+    return [OVERRIDES_FIELDS] + [[row.get(field, "") for field in OVERRIDES_FIELDS] for row in merged]
+
+
+def _filter_published_rows(raw: list[dict], min_year: int = PUBLISHED_MIN_YEAR) -> list[dict]:
+    """
+    Publish only explicit decisions with consistent operational facts:
+    editorial (resolved) or base-table automatic (auto_resolved), both set by
+    the classifier.
+
+    This function deliberately does not reconstruct scope from OPEID suffix,
+    IPEDS identity, or the absence of another closure record.
+    """
+    pub: list[dict] = []
+    for r in raw:
+        if r.get("review_status") not in _PUBLISHABLE_STATUSES or r.get("review_required") != "false":
+            continue
+
+        decision = r.get("publication_decision", "")
+        internal_type = r.get("closure_type", "")
+        location_ceased = r.get("location_operations_ceased", "")
+        parent_continued = r.get("parent_continued", "")
+        if decision == "include_institution":
+            if internal_type not in _INSTITUTION_TYPES or not (
+                location_ceased == "true" and parent_continued == "false"
+            ):
+                continue
             scope = "institution"
             published_ctype = "institution_closure"
-            parent_continued = "false"
-            incl_inst = "true"
-            incl_campus = "false"
-            approach2 = "true"
-            event_id = f"institution:{opeid6}:{closed_date}"
-
-        elif ctype in _CAMPUS_TYPES:
-            # Branch campus — apply all four gates.
-            if not _is_matched(r.get("match_method", "")):
-                continue  # No confirmed IPEDS identity
-            if r.get("iclevel", "") not in {"1", "2", "3"}:
-                continue  # No confirmed postsecondary level
-            if opeid6 in closed_main_opeid6s:
-                continue  # Parent institution also closed — not a standalone campus event
+        elif decision == "include_campus":
+            if internal_type not in _CAMPUS_TYPES or not (
+                location_ceased == "true" and parent_continued == "true"
+            ):
+                continue
             scope = "campus"
             published_ctype = "campus_closure"
-            parent_continued = "true"
-            incl_inst = "false"
-            incl_campus = "true"
-            approach2 = "false"
-            event_id = f"campus:{opeid8}:{closed_date}"
-
         else:
-            continue  # main campus with excluded or unrecognised type
+            continue
+
+        opeid8 = r.get("opeid8", "")
+        opeid6 = r.get("opeid6", "")
+        closed_date = (
+            r.get("published_closed_date_iso", "")
+            or r.get("verified_closed_date_iso", "")
+            or r.get("closed_date_iso", "")
+        )
+        closed_year = closed_date[:4] if len(closed_date) >= 4 else r.get("closed_year", "")
+        if not closed_year.isdigit() or int(closed_year) < min_year:
+            continue
+
+        event_id = r.get("closure_event_id", "")
+        if not event_id:
+            continue
 
         pub.append({
             "opeid8":                     opeid8,
@@ -243,29 +342,50 @@ def _filter_published_rows(raw: list[dict], min_year: int = 2000) -> list[dict]:
             "city":                       r.get("city", ""),
             "state":                      r.get("state", ""),
             "control_label":              r.get("control_label", ""),
+            "institution_category":       r.get("institution_category", ""),
             "program_level":              r.get("program_level", ""),
             "credential_level":           r.get("credential_level", ""),
             "enrollment_band":            r.get("enrollment_band", ""),
             "enrollment_headcount_total": r.get("enrollment_headcount_total", ""),
             "closed_date_iso":            closed_date,
-            "closed_year":                r.get("closed_year", ""),
+            "closed_year":                closed_year,
             "closure_type":               published_ctype,
             "opeid6":                     opeid6,
             "unitid":                     r.get("unitid", ""),
             "closure_scope":              scope,
+            "parent_continued":           parent_continued,
             "classification_basis":       r.get("closure_type_basis", ""),
             "closure_event_id":           event_id,
+            "fsa_closed_date_iso":         r.get("fsa_closed_date_iso", "") or r.get("closed_date_iso", ""),
+            "verified_closed_date_iso":    r.get("verified_closed_date_iso", ""),
+            "date_basis":                 r.get("date_basis", ""),
+            "date_evidence_url":          r.get("date_evidence_url", ""),
         })
 
+    event_ids = [r["closure_event_id"] for r in pub]
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("Duplicate closure_event_id in published rows")
     pub.sort(key=lambda r: r.get("closed_date_iso", ""), reverse=True)
     return pub
 
 
-def _build_published_dicts(path: Path, min_year: int = 2000) -> list[dict]:
+def _build_published_dicts(path: Path, min_year: int = PUBLISHED_MIN_YEAR) -> list[dict]:
     """Load events CSV and return publication-ready records as list of dicts."""
     with path.open(encoding="utf-8", newline="") as fh:
         raw = list(csv.DictReader(fh))
     return _filter_published_rows(raw, min_year)
+
+
+# The published table (the tracker's list) is institution closures only.
+# Campus closures that report separately to IPEDS go to their own tab, as
+# context for the story (a minimum count, not a headline).
+CAMPUS_TAB = "campus_closures"
+
+
+def _split_by_scope(pub: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Return (institution rows, campus rows)."""
+    return ([d for d in pub if d["closure_scope"] == "institution"],
+            [d for d in pub if d["closure_scope"] == "campus"])
 
 
 def _pub_dicts_to_rows(pub: list[dict]) -> list[list]:
@@ -393,6 +513,49 @@ def _build_by_state_data(pub: list[dict]) -> list[list]:
     ]
 
 
+def _validate_publish_bundle(
+    pub: list[dict],
+    by_year: list[list],
+    by_state: list[list],
+) -> None:
+    """Fail before the first Sheet write if schema or totals do not reconcile."""
+    event_ids = [r.get("closure_event_id", "") for r in pub]
+    if any(not value for value in event_ids):
+        raise ValueError("Published row missing closure_event_id")
+    if len(event_ids) != len(set(event_ids)):
+        raise ValueError("Published closure_event_id values are not unique")
+
+    for row in pub:
+        scope = row.get("closure_scope", "")
+        expected_type = "institution_closure" if scope == "institution" else "campus_closure"
+        if scope not in {"institution", "campus"} or row.get("closure_type") != expected_type:
+            raise ValueError(f"Invalid published scope/type for {row.get('closure_event_id', '')}")
+        expected_parent = "false" if scope == "institution" else "true"
+        if row.get("parent_continued") != expected_parent:
+            raise ValueError(f"Invalid parent_continued for {row.get('closure_event_id', '')}")
+
+    if not by_year or by_year[0] != _BY_YEAR_HEADER:
+        raise ValueError("by_year schema mismatch")
+    if not by_state or by_state[0] != _BY_STATE_HEADER:
+        raise ValueError("by_state schema mismatch")
+
+    annual = [r for r in by_year[1:] if r[1] == 0]
+    annual_inst = sum(r[12] for r in annual)
+    annual_campus = sum(r[13] for r in annual)
+    expected_inst = sum(1 for r in pub if r.get("closed_year") and r["closure_scope"] == "institution")
+    expected_campus = sum(1 for r in pub if r.get("closed_year") and r["closure_scope"] == "campus")
+    if (annual_inst, annual_campus) != (expected_inst, expected_campus):
+        raise ValueError("by_year totals do not reconcile to published rows")
+
+    state_rows = [r for r in pub if len(r.get("state", "").strip()) == 2]
+    state_inst = sum(r[5] for r in by_state[1:])
+    state_campus = sum(r[6] for r in by_state[1:])
+    expected_state_inst = sum(1 for r in state_rows if r["closure_scope"] == "institution")
+    expected_state_campus = sum(1 for r in state_rows if r["closure_scope"] == "campus")
+    if (state_inst, state_campus) != (expected_state_inst, expected_state_campus):
+        raise ValueError("by_state totals do not reconcile to published rows")
+
+
 # ---------------------------------------------------------------------------
 # Sheet helpers
 # ---------------------------------------------------------------------------
@@ -413,155 +576,113 @@ def _open_or_create_tab(sh: gspread.Spreadsheet, tab: str, ncols: int) -> gsprea
         return sh.add_worksheet(title=tab, rows=50_000, cols=ncols)
 
 
+# Editor-confirmed outcomes where operations continued under another
+# institution; excluded from closure counts and listed on the mergers tab.
+MERGER_TYPES = {
+    "merger_absorption": "merger",
+    "affiliation_or_governance_change": "affiliation",
+}
+
+MERGERS_HEADER = [
+    "school_name", "city", "state", "opeid8", "control_label", "program_level",
+    "fsa_closed_date_iso", "fsa_closed_year", "outcome", "basis",
+    "evidence_url", "replacement_opeid8", "closure_event_id",
+]
+
+
+def _build_mergers_data(path: Path) -> list[list]:
+    """Rows for the mergers tab: editor-confirmed mergers and affiliations, newest first."""
+    with path.open(encoding="utf-8", newline="") as fh:
+        rows = [
+            r for r in csv.DictReader(fh)
+            if r.get("review_status") == "resolved" and r.get("closure_type") in MERGER_TYPES
+        ]
+    rows.sort(key=lambda r: r.get("fsa_closed_date_iso", "") or r.get("closed_date_iso", ""), reverse=True)
+    out: list[list] = [MERGERS_HEADER]
+    for r in rows:
+        fsa_date = r.get("fsa_closed_date_iso", "") or r.get("closed_date_iso", "")
+        out.append([
+            r.get("school_name", ""), r.get("city", ""), r.get("state", ""), r.get("opeid8", ""),
+            r.get("control_label", ""), r.get("program_level", ""), fsa_date, fsa_date[:4],
+            MERGER_TYPES[r["closure_type"]], r.get("closure_type_basis", ""),
+            r.get("date_evidence_url", ""), r.get("replacement_opeid8", ""), r.get("closure_event_id", ""),
+        ])
+    return out
+
+
 def _build_readme_data(generated_at: str = "") -> list[list]:
     """Return README tab content as a list of single-cell rows."""
-    lines = [
+    return [
         ["Hechinger Report — College Closure Tracker"],
         [f"Generated: {generated_at}" if generated_at else ""],
         [""],
-        ["ABOUT THIS SPREADSHEET"],
-        ["Tracks U.S. college and university closures using Federal Student Aid (FSA) data,"],
-        ["enriched with IPEDS institutional records. Refreshed weekly. Editorial overrides"],
-        ["are maintained in the overrides tab."],
+        ["PUBLICATION RULE"],
+        ["FSA closed-school rows are candidates, not proof that educational operations ceased."],
+        ["Two paths enter published:"],
+        ["  auto_resolved — closures in the frozen base table that meet the automatic evidence standard:"],
+        ["    campus = exact IPEDS identity + another location of the same OPEID6 active in RT01 on the close date;"],
+        ["    institution = main location + exact IPEDS identity + no other RT01 location active on the close date."],
+        ["  resolved — an editor's decision in the overrides tab (always wins over auto_resolved)."],
+        ["FSA's location file keeps stale 'open' rows for defunct schools, so a main-location closure"],
+        ["with another location still listed counts as an institution closure only when either:"],
+        ["  no school under the OPEID6 is ACTIVE in IPEDS after the closure year (IPEDS checked through the latest year), or"],
+        ["  (base table only) the Financial Health tracker had an editor-confirmed institution_closure"],
+        ["  for the same UNITID as of the freeze."],
+        ["IPEDS STATUS = C (combined with another institution) always sends the row to editors as a possible merger."],
+        ["Every closure that first appears AFTER the base table was frozen goes to editor review,"],
+        ["even if it meets the automatic standard (review_reason includes new_since_baseline)."],
+        ["Headline products should filter published to closure_scope = institution; campus rows remain separately filterable."],
         [""],
         ["TABS"],
+        ["closure_list — complete candidate ledger and structured evidence; no candidate type is hidden."],
+        ["overrides — one combined pending/resolved review queue keyed by closure_event_id."],
+        ["published — the tracker's list: institution (main-campus) closures only."],
+        ["campus_closures — closed campuses that report separately to IPEDS while their college continued."],
+        ["  A MINIMUM, not a headline: ~14,000 locations closed since 1996 while their college continued,"],
+        ["  most reporting under the parent (incl. extension and high-school sites). Also in by_year/by_state."],
+        ["by_year — institution-only total plus separate campus/all-event columns."],
+        ["by_state — institution-only total plus separate campus/all-event columns."],
+        ["mergers — editor-confirmed mergers and affiliations (excluded from closure counts), with basis and source."],
         [""],
-        ["published — public-facing dataset (also read by Datawrapper charts)"],
-        ["  Two mutually exclusive event types in the closure_type column:"],
-        ["    institution_closure  The entire institution (or last campus of a system) closed."],
-        ["    campus_closure       A branch campus closed; parent institution continued."],
+        ["OVERRIDES WORKFLOW"],
+        ["review_status: pending | resolved | needs_more_evidence | needs_re_review"],
+        ["  (auto_resolved is pipeline-only and never appears as an editor choice)"],
+        ["publication_decision: include_institution | include_campus | exclude"],
+        ["include_institution requires location_operations_ceased=true and parent_continued=false."],
+        ["include_campus requires location_operations_ceased=true and parent_continued=true."],
+        ["If source evidence changes, evidence_fingerprint forces needs_re_review."],
         [""],
-        ["  Filter recipes:"],
-        ["    Institution headline count : closure_scope = institution"],
-        ["    Campus closures only       : closure_scope = campus"],
-        ["    All closure events         : no filter"],
-        ["    By time period             : filter closed_year"],
+        ["MERGERS / CONSOLIDATIONS"],
+        ["RT11 identifies the organization holding records; it is never merger evidence."],
+        ["RT06 creates an exact-replacement review signal only when the dated old-to-new OPEID"],
+        ["relationship is near the event and the exact successor is active in RT01."],
+        ["Names, shared addresses, or several nearby closures may trigger review only."],
+        ["Operations continuing through a successor => exclude as merger/affiliation."],
+        ["Institution ceased but assets/students/programs transferred => institution closure with context."],
         [""],
-        ["  Column definitions:"],
-        ["    opeid8                     8-digit FSA school identifier (OPE ID)"],
-        ["    school_name                Name at time of closure (from FSA database)"],
-        ["    city                       City"],
-        ["    state                      Two-letter US state code"],
-        ["    control_label              Institutional control: public | nonprofit | for-profit"],
-        ["    program_level              Highest credential offered:"],
-        ["                               4-year or above | 2-year | Less than 2-year"],
-        ["    credential_level           Specific credential level:"],
-        ["                               Bachelor's | Associate's | Certificate | Non-degree |"],
-        ["                               Master's | Doctoral | Bachelor's or above"],
-        ["    enrollment_band            IPEDS official size category at or near closure"],
-        ["    enrollment_headcount_total Total headcount enrollment from IPEDS"],
-        ["    closed_date_iso            FSA administrative close date (YYYY-MM-DD)"],
-        ["                               This is when Title IV participation ended, not"],
-        ["                               necessarily when students last attended."],
-        ["    closed_year                Year derived from closed_date_iso"],
-        ["    closure_type               institution_closure or campus_closure"],
-        ["    opeid6                     6-digit system identifier (parent of opeid8)"],
-        ["    unitid                     IPEDS unit identifier matched to this campus"],
-        ["    closure_scope              institution or campus (see above)"],
-        ["    classification_basis       Evidence used for automatic classification"],
-        ["    closure_event_id           Stable unique identifier:"],
-        ["                               institution:{opeid6}:{date} or campus:{opeid8}:{date}"],
+        ["WHY OUR NUMBERS DIFFER FROM SHEEO AND KELCHEN (full note: README.md in the GitHub repo)"],
+        ["Rule: a college is closed when its main-campus federal record closes AND federal data show the"],
+        ["  institution stopped (federal records show no other location still open, or it stopped reporting"],
+        ["  to IPEDS as active)."],
+        ["  Mergers are not closures (see the mergers tab). Every new closure is reviewed by an editor."],
+        ["  Chains that held separate federal approvals for several schools count once per school."],
+        ["vs SHEEO (2008-2023: 848 vs our 1,036; associate-or-higher 287 vs our 415): the rules are strict in"],
+        ["  different places. SHEEO counts a college"],
+        ["  only when EVERY federal location record is closed. FSA often leaves one marked open after a school"],
+        ["  shuts (ITT Tech, Brightwood, Presentation College), dropping 219 closed colleges. We leave out 33"],
+        ["  SHEEO counts: district programs, satellite IDs of open colleges, mergers, unresolved cases."],
+        ["vs Kelchen et al. (Jan 1996-Nov 2023: 1,661-1,671 vs our 1,748): the federal file has grown. His own"],
+        ["  rule applied to today's file gives 1,825, more than ours; adding mergers back gives just 1,752."],
+        ["Campus closures (781) are a FLOOR: only campuses that report to IPEDS separately. ~14,000 locations"],
+        ["  closed since 1996 while their college continued, incl. extension and high-school sites."],
+        ["Limitation: a school that left federal aid but kept teaching would look closed; rare, editors check."],
+        ["In scope: 50 states, DC, PR, GU, VI, AS, MP. Out: foreign locations and the freely associated states."],
         [""],
-        ["closure_list — full internal dataset for editorial review"],
-        ["  Contains all classified records including administrative sites, unclassified"],
-        ["  records, and merger candidates. Use to verify classifications and populate"],
-        ["  the overrides tab."],
-        ["  Additional columns beyond published:"],
-        ["    iclevel_label              IPEDS level code abbreviation (4yr+ | 2-4yr | <2yr)"],
-        ["    institution_category       IPEDS sector label (public_4yr, for_profit_2yr, etc.)"],
-        ["    is_main_campus             true if FSA OPEID suffix = 00"],
-        ["    is_suspicious_location     true if name matches SHEEO sub-unit keyword pattern"],
-        ["    approach2_main_campus_only true for the institution-level (approach 2) record"],
-        ["    is_traditional_college     true for public/nonprofit 4yr or 2yr institutions"],
-        ["    closure_type               Internal classifier type (see valid values below)"],
-        ["    closure_type_basis         Reason for automatic classification"],
-        ["    match_method               IPEDS matching method used"],
-        [""],
-        ["overrides — editorial closure-type overrides"],
-        ["  Each row overrides the automatic classification for one OPEID8."],
-        ["  Populated manually by editors. The pipeline reads this tab on each publish run."],
-        ["  Required columns:"],
-        ["    opeid8             8-digit FSA identifier to override"],
-        ["    school_name        School name (for readability; not used by pipeline)"],
-        ["    state              State (for readability; not used by pipeline)"],
-        ["    closed_date_iso    Close date (for readability; not used by pipeline)"],
-        ["    closure_type       Override type (must be one of the valid values below)"],
-        ["    closure_type_basis Documented reason for override — required"],
-        ["    editor_note        Optional additional context"],
-        [""],
-        ["  Valid closure_type values for overrides:"],
-        ["    institutional_closure    Confirmed operational closure (public/nonprofit)"],
-        ["    for_profit_closure       Confirmed operational closure (for-profit)"],
-        ["    system_consolidation     Confirmed multi-campus system shutdown"],
-        ["    branch_closure           Confirmed branch campus closure"],
-        ["    merger_absorption        Confirmed merger or absorption"],
-        ["    location_administrative  Confirmed non-campus administrative site"],
-        ["    unclassified             Unable to confirm event type"],
-        [""],
-        ["  Handling merger candidates:"],
-        ["    Records automatically detected as merger candidates (closure_type ="],
-        ["    merger_absorption in closure_list) are excluded from published by default."],
-        ["    RT11 record-holder evidence flags a possible merger but does not prove"],
-        ["    that the institution ceased educational operations."],
-        ["    To reclassify a confirmed operational closure:"],
-        ["      1. Find the record in closure_list (closure_type = merger_absorption)"],
-        ["      2. Add a row in this overrides tab with its opeid8"],
-        ["      3. Set closure_type = institutional_closure (or for_profit_closure)"],
-        ["      4. Document the evidence in closure_type_basis"],
-        ["    To confirm a genuine merger (institution lives on under another name):"],
-        ["      No action needed — it stays excluded from published closure counts."],
-        [""],
-        ["by_year — annual and monthly closure counts (from published tab)"],
-        ["  Rows with month_num = 0 are annual totals."],
-        ["  Rows with month_num 1-12 are monthly breakdowns."],
-        ["    year                   Closure year"],
-        ["    month_num              0 = annual; 1-12 = month"],
-        ["    month                  Month abbreviation or blank for annual rows"],
-        ["    total                  Institution closures (= institution_closures)"],
-        ["    for_profit             Institution closures: for-profit control"],
-        ["    nonprofit              Institution closures: nonprofit control"],
-        ["    public                 Institution closures: public control"],
-        ["    non_degree             Institution closures: non-degree-granting"],
-        ["    certificate            Institution closures: certificate programs"],
-        ["    associate              Institution closures: associate's degree"],
-        ["    bachelor               Institution closures: bachelor's degree"],
-        ["    graduate               Institution closures: master's or doctoral"],
-        ["    institution_closures   Full institution closures (= total)"],
-        ["    campus_closures        Branch campus closures (parent continued)"],
-        ["    all_published_events   institution_closures + campus_closures"],
-        ["    unknown_control        Institution closures with no recognized control"],
-        ["    unknown_credential     Institution closures with no recognized credential"],
-        ["  Reconciliation:"],
-        ["    for_profit + nonprofit + public + unknown_control = institution_closures"],
-        ["    non_degree + certificate + associate + bachelor + graduate"],
-        ["      + unknown_credential = institution_closures"],
-        ["    all_published_events = institution_closures + campus_closures"],
-        [""],
-        ["by_state — closure counts by US state (from published tab)"],
-        ["    state                  Two-letter state code"],
-        ["    total                  Institution closures (= institution_closures)"],
-        ["    for_profit             Institution closures: for-profit control"],
-        ["    nonprofit              Institution closures: nonprofit control"],
-        ["    public                 Institution closures: public control"],
-        ["    institution_closures   Full institution closures"],
-        ["    campus_closures        Branch campus closures in this state"],
-        ["    all_published_events   institution_closures + campus_closures"],
-        ["    unknown_control        Institution closures with no recognized control"],
-        ["  Note: an institution closure is counted once in its own state only."],
-        [""],
-        ["DATA SOURCES"],
-        ["  FSA closed school list — weekly export, US Department of Education"],
-        ["  IPEDS Institutional Characteristics — 2014-2025 annual data"],
-        ["  RT11 record holder data — merger/absorption candidate detection"],
-        [""],
-        ["METHODOLOGY"],
-        ["  Classification follows SHEEO framework (Kelchen 2024, Burchart 2026)."],
-        ["  Institution closures use the SHEEO Approach 2 definition: one record per"],
-        ["  institution, counting only the last or only campus of each system."],
-        ["  Campus closures are independent branch closures where the parent continued."],
-        ["  The headline institution closure count: published tab, closure_scope = institution."],
+        ["DATES AND IPEDS"],
+        ["fsa_closed_date_iso remains immutable; closed_date_iso is the verified public date when available."],
+        ["program_level uses historical IPEDS ICLEVEL: 4-year or above | 2-year | Less than 2-year."],
+        ["Approach 3 is distinct OPEID6 systems with a genuine closure, never a sum of event rows."],
     ]
-    return lines
 
 
 def _write_tab(sh: gspread.Spreadsheet, tab: str, data: list[list]) -> None:
@@ -569,6 +690,30 @@ def _write_tab(sh: gspread.Spreadsheet, tab: str, data: list[list]) -> None:
     ws.clear()
     ws.update("A1", data)
     print(f"  '{tab}' tab written ({len(data) - 1} rows)")
+
+
+def _existing_records(ws: gspread.Worksheet) -> list[dict]:
+    try:
+        rows = ws.get_all_records(default_blank="")
+        return rows if isinstance(rows, list) else []
+    except Exception:
+        return []
+
+
+def _merge_local_overrides(sheet_rows: list[dict], local_path: Path = LOCAL_OVERRIDES) -> list[dict]:
+    """Add committed local override rows the Sheet does not hold yet.
+
+    The publish workflow pulls the Sheet's overrides tab over the local CSV, so
+    a decision recorded only locally would be lost. The Sheet wins for any
+    closure_event_id it already holds (editors may have changed it there).
+    """
+    if not local_path.exists():
+        return sheet_rows
+    in_sheet = {str(r.get("closure_event_id", "")).strip() for r in sheet_rows}
+    with local_path.open(encoding="utf-8", newline="") as fh:
+        local = [r for r in csv.DictReader(fh)
+                 if (r.get("closure_event_id") or "").strip() and r["closure_event_id"].strip() not in in_sheet]
+    return list(sheet_rows) + local
 
 
 # ---------------------------------------------------------------------------
@@ -585,19 +730,23 @@ def push(sheet_id: str, tab: str) -> int:
 
     if tab == "published":
         pub_dicts = _build_published_dicts(events_path)
-        data = _pub_dicts_to_rows(pub_dicts)
+        by_year = _build_by_year_data(pub_dicts)
+        by_state = _build_by_state_data(pub_dicts)
+        _validate_publish_bundle(pub_dicts, by_year, by_state)
+        institution_rows, campus_rows = _split_by_scope(pub_dicts)
+        data = _pub_dicts_to_rows(institution_rows)
         nrows = len(data) - 1
-        inst_n = sum(1 for d in pub_dicts if d["closure_scope"] == "institution")
-        camp_n = sum(1 for d in pub_dicts if d["closure_scope"] == "campus")
-        print(f"  {nrows:,} records → '{tab}' tab "
-              f"({inst_n:,} institution, {camp_n:,} campus)")
+        print(f"  {nrows:,} institution closures → '{tab}' tab; "
+              f"{len(campus_rows):,} → '{CAMPUS_TAB}' tab")
         ws = _open_or_create_tab(sh, tab, len(_PUBLIC_COLS))
         ws.clear()
         ws.update("A1", data)
         print(f"  Written {nrows:,} rows to '{tab}' tab.")
-        print("Writing aggregated chart tabs…")
-        _write_tab(sh, "by_year",  _build_by_year_data(pub_dicts))
-        _write_tab(sh, "by_state", _build_by_state_data(pub_dicts))
+        print("Writing campus and aggregated chart tabs…")
+        _write_tab(sh, CAMPUS_TAB, _pub_dicts_to_rows(campus_rows))
+        _write_tab(sh, "by_year", by_year)
+        _write_tab(sh, "by_state", by_state)
+        _write_tab(sh, "mergers", _build_mergers_data(events_path))
         from datetime import datetime, timezone
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         _write_tab(sh, "readme", _build_readme_data(generated_at))
@@ -616,9 +765,20 @@ def push(sheet_id: str, tab: str) -> int:
         new_opeid8s = {row[0] for row in data[1:] if row[0]} - existing
         new_count = len(new_opeid8s)
         print(f"  {new_count} new opeid8(s) not previously in sheet")
+
+        # Build and validate the companion review queue before clearing either
+        # tab, so local preparation failures leave the Sheet untouched.
+        with events_path.open(encoding="utf-8", newline="") as fh:
+            event_dicts = list(csv.DictReader(fh))
+        overrides_ws = _open_or_create_tab(sh, "overrides", len(OVERRIDES_FIELDS))
+        queue = _build_overrides_queue(event_dicts, _merge_local_overrides(_existing_records(overrides_ws)))
+
         ws.clear()
         ws.update("A1", data)
         print(f"  Written {nrows:,} rows to '{tab}' tab.")
+        overrides_ws.clear()
+        overrides_ws.update("A1", queue)
+        print(f"  Merged review queue written to 'overrides' ({len(queue) - 1:,} rows).")
         return new_count
 
     else:
