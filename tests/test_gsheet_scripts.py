@@ -215,7 +215,7 @@ class TestTabColumns:
 
 class TestPublishedSchema:
     def test_exact_column_count(self):
-        assert len(pgs._PUBLIC_COLS) == 23
+        assert len(pgs._PUBLIC_COLS) == 17
 
     def test_first_12_columns_in_order(self):
         expected = [
@@ -229,16 +229,16 @@ class TestPublishedSchema:
     def test_new_metadata_columns_appended(self):
         new_cols = pgs._PUBLIC_COLS[12:]
         assert "closure_scope" in new_cols
-        assert "parent_institution_continued" in new_cols
-        assert "closure_event_id" in new_cols
-        assert "sheeo_approach1_include" in new_cols
-        assert "sheeo_approach2_include" in new_cols
-        assert "sheeo_approach3_include" in new_cols
         assert "classification_basis" in new_cols
-        assert "include_institution_totals" in new_cols
-        assert "include_campus_totals" in new_cols
+        assert "closure_event_id" in new_cols
         assert "opeid6" in new_cols
         assert "unitid" in new_cols
+
+    def test_redundant_columns_not_in_published(self):
+        for col in ("parent_institution_continued", "include_institution_totals",
+                    "include_campus_totals", "sheeo_approach1_include",
+                    "sheeo_approach2_include", "sheeo_approach3_include"):
+            assert col not in pgs._PUBLIC_COLS, f"Redundant column still present: {col}"
 
     def test_no_blank_or_unnamed_columns(self):
         for col in pgs._PUBLIC_COLS:
@@ -277,13 +277,11 @@ class TestFilterPublishedRows:
         result = pgs._filter_published_rows(rows)
         assert result[0]["closure_type"] == "institution_closure"
 
-    def test_institution_flags(self):
+    def test_institution_scope_and_event_id(self):
         rows = [_inst_event()]
         r = pgs._filter_published_rows(rows)[0]
-        assert r["parent_institution_continued"] == "false"
-        assert r["include_institution_totals"] == "true"
-        assert r["include_campus_totals"] == "false"
-        assert r["sheeo_approach2_include"] == "true"
+        assert r["closure_scope"] == "institution"
+        assert r["closure_event_id"].startswith("institution:")
 
     def test_institution_event_id_format(self):
         rows = [_inst_event(opeid6="001002", closed_date_iso="2020-06-01")]
@@ -302,15 +300,12 @@ class TestFilterPublishedRows:
         scopes = {r["opeid8"]: r["closure_scope"] for r in result}
         assert scopes.get("00600001") == "campus"
 
-    def test_campus_flags(self):
+    def test_campus_scope_and_event_id(self):
         branch = _campus_event(opeid8="00700001", opeid6="007000",
                                match_method="matched_opeid8_yr2018", iclevel="1")
         r = pgs._filter_published_rows([branch])[0]
         assert r["closure_scope"] == "campus"
-        assert r["parent_institution_continued"] == "true"
-        assert r["include_institution_totals"] == "false"
-        assert r["include_campus_totals"] == "true"
-        assert r["sheeo_approach2_include"] == "false"
+        assert r["closure_event_id"].startswith("campus:")
 
     def test_campus_event_id_format(self):
         branch = _campus_event(opeid8="00700001", opeid6="007000",
@@ -379,27 +374,13 @@ class TestFilterPublishedRows:
 
     # --- Approach flags ---
 
-    def test_all_published_rows_have_sheeo_approach1_true(self):
-        inst = _inst_event(opeid8="00111100", opeid6="001111")
-        branch = _campus_event(opeid8="00222201", opeid6="002222",
-                               match_method="matched_opeid8_yr2018", iclevel="1")
-        result = pgs._filter_published_rows([inst, branch])
-        assert all(r["sheeo_approach1_include"] == "true" for r in result)
-
-    def test_all_published_rows_have_sheeo_approach3_true(self):
-        inst = _inst_event(opeid8="00111100", opeid6="001111")
-        branch = _campus_event(opeid8="00222201", opeid6="002222",
-                               match_method="matched_opeid8_yr2018", iclevel="1")
-        result = pgs._filter_published_rows([inst, branch])
-        assert all(r["sheeo_approach3_include"] == "true" for r in result)
-
-    def test_merger_candidate_excluded_from_approach3(self):
+    def test_merger_candidate_excluded_from_published(self):
         rows = [_inst_event(closure_type="merger_absorption")]
         result = pgs._filter_published_rows(rows)
         assert result == []
 
-    def test_approach3_multiple_campuses_same_opeid6(self):
-        # Two campus rows from same OPEID6 — both have approach3=true; consumer counts distinct
+    def test_multiple_campus_closures_same_opeid6_both_published(self):
+        # Two independent branch closures from same OPEID6 (parent not fully closed)
         branch1 = _campus_event(opeid8="00800001", opeid6="008000",
                                 match_method="matched_opeid8_yr2018", iclevel="1",
                                 closed_date_iso="2018-01-01", closed_year="2018")
@@ -408,22 +389,9 @@ class TestFilterPublishedRows:
                                 closed_date_iso="2017-06-01", closed_year="2017")
         result = pgs._filter_published_rows([branch1, branch2])
         assert len(result) == 2
-        assert all(r["sheeo_approach3_include"] == "true" for r in result)
-        # Approach 3 aggregate = 1 (one distinct OPEID6)
-        approach3_opeid6s = {r["opeid6"] for r in result if r["sheeo_approach3_include"] == "true"}
-        assert len(approach3_opeid6s) == 1
-
-    def test_approach3_full_institution_counts_once(self):
-        rows = [_inst_event(opeid8="00111100", opeid6="001111")]
-        result = pgs._filter_published_rows(rows)
-        approach3_opeid6s = {r["opeid6"] for r in result if r["sheeo_approach3_include"] == "true"}
-        assert len(approach3_opeid6s) == 1
-
-    def test_approach3_excluded_record_does_not_qualify(self):
-        admin = _inst_event(closure_type="location_administrative")
-        uncertain = _inst_event(closure_type="unclassified", opeid8="00222200", opeid6="002222")
-        result = pgs._filter_published_rows([admin, uncertain])
-        assert result == []
+        # Approach 3 aggregate = 1 distinct OPEID6 (consumer-side calculation)
+        distinct_opeid6s = {r["opeid6"] for r in result}
+        assert len(distinct_opeid6s) == 1
 
     # --- closure_event_id uniqueness ---
 
@@ -785,7 +753,9 @@ class TestLoadRowsFiltering:
 
 class TestValidateRows:
     def test_valid_row_passes(self):
-        rows = [{"opeid8": "00219300", "closure_type": "merger_absorption",
+        rows = [{"opeid8": "00219300", "school_name": "Mount Ida College",
+                 "state": "MA", "closed_date_iso": "2018-05-01",
+                 "closure_type": "merger_absorption",
                  "closure_type_basis": "Editorial", "editor_note": "Mount Ida"}]
         valid, errors = pgso._validate_rows(rows)
         assert len(valid) == 1
@@ -831,10 +801,15 @@ class TestValidateRows:
         assert errors == 1
 
     def test_output_has_all_fields(self):
-        rows = [{"opeid8": "00219300", "closure_type": "merger_absorption",
+        rows = [{"opeid8": "00219300", "school_name": "Mount Ida College",
+                 "state": "MA", "closed_date_iso": "2018-05-01",
+                 "closure_type": "merger_absorption",
                  "closure_type_basis": "Editorial: merged", "editor_note": "Mount Ida"}]
         valid, _ = pgso._validate_rows(rows)
-        assert set(valid[0].keys()) == {"opeid8", "closure_type", "closure_type_basis", "editor_note"}
+        assert set(valid[0].keys()) == {
+            "opeid8", "school_name", "state", "closed_date_iso",
+            "closure_type", "closure_type_basis", "editor_note",
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -41,7 +41,23 @@ from classify_closure_events import EVENT_TYPES
 
 PROJECT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = PROJECT / "data" / "manual" / "closure_type_overrides.csv"
-OVERRIDES_FIELDS = ["opeid8", "closure_type", "closure_type_basis", "editor_note"]
+
+# Columns the pipeline reads and writes.  school_name / state / closed_date_iso
+# are context-only fields visible to editors in the Sheet but ignored by the
+# classifier.  opeid8 / closure_type / closure_type_basis are required; the
+# rest are optional and not validated.
+OVERRIDES_FIELDS = [
+    "opeid8",
+    "school_name",        # context for editors; not used by pipeline
+    "state",              # context for editors; not used by pipeline
+    "closed_date_iso",    # context for editors; not used by pipeline
+    "closure_type",
+    "closure_type_basis",
+    "editor_note",
+]
+
+# Fields the classifier actually uses (subset of OVERRIDES_FIELDS).
+_REQUIRED_OVERRIDE_FIELDS = frozenset({"opeid8", "closure_type", "closure_type_basis"})
 
 _SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -96,6 +112,9 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
             continue
         valid.append({
             "opeid8":               opeid8,
+            "school_name":          str(row.get("school_name", "")).strip(),
+            "state":                str(row.get("state", "")).strip(),
+            "closed_date_iso":      str(row.get("closed_date_iso", "")).strip(),
             "closure_type":         ctype,
             "closure_type_basis":   str(row.get("closure_type_basis", "")).strip(),
             "editor_note":          str(row.get("editor_note", "")).strip(),
