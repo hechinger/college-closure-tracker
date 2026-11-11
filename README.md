@@ -22,9 +22,9 @@ slightly as federal data updates. The published table covers 1996 onward.*
 ## The rule in brief
 
 - **A college counts as closed** when the federal record for its main campus
-  closes **and** federal data show the institution itself stopped operating:
-  no other location was still open, or the school never again reported to
-  IPEDS as an active institution.
+  closes **and** federal data point to the institution itself having stopped:
+  federal records don't show any other location still open, or the school
+  stopped reporting to IPEDS as an active institution.
 - **Mergers and affiliations are not closures.** When a school's operations
   continued under another institution, an editor confirms it and it is listed
   on the `mergers` tab instead.
@@ -46,9 +46,10 @@ slightly as federal data updates. The published table covers 1996 onward.*
 | Same, colleges offering an associate degree or higher | 287 (Hechinger's earlier "nearly 300") | 415 |
 | Kelchen et al. (Federal Reserve, 2025), main campuses, Jan 1996 – Nov 2023 | 1,661–1,671 | 1,748 |
 
-**Higher than SHEEO, mainly because of one gap in FSA's records.** SHEEO's
-method counts a college only when every one of its federal location records is
-marked closed. FSA often leaves one location marked "open" years after a school
+**Higher than SHEEO, even though our checks are tighter in most ways.** The
+two rules are strict in different places. SHEEO's method counts a college only
+when every one of its federal location records is marked closed. That
+requirement mostly catches FSA bookkeeping, not schools still operating. FSA often leaves one location marked "open" years after a school
 shut. Examples are ITT Tech, Brightwood College and Presentation College. That
 drops 219 closed colleges from the SHEEO count; IPEDS shows each of them
 stopped operating. Going the other way, we leave out 33 schools SHEEO counts:
@@ -59,10 +60,12 @@ stopped operating. Going the other way, we leave out 33 schools SHEEO counts:
 - 3 mergers, affiliations or reinstatements;
 - 15 still unresolved (awaiting an editor, or no main-campus record).
 
-**Higher than Kelchen, mainly because the federal file has grown.** The
-current FSA file lists 1,973 main-campus closures for his period, about 250
-more than the roughly 1,726 in his November 2023 source (1,671 matched plus 55
-he couldn't match). We publish 1,748 of those 1,973. The rest are excluded or
+**Higher than Kelchen because the federal file has grown, not because our
+rule is looser.** Applied to today's federal file, Kelchen's own rule (main
+campus closed, matched to IPEDS) gives 1,825, more than our 1,748. The file now
+lists 1,973 main-campus closures for his period, about 250 more than the
+roughly 1,726 in his November 2023 source (1,671 matched plus 55 he couldn't
+match). We publish 1,748 of those 1,973. The rest are excluded or
 awaiting an editor:
 
 - 37 district programs or administrative offices;
@@ -70,12 +73,15 @@ awaiting an editor:
 - 6 reinstated schools;
 - 176 awaiting editors.
 
-His list isn't public, so we can't match the gap school by school.
+His list isn't public, so we can't match the gap school by school. Adding
+confirmed mergers back changes almost nothing (1,752).
 
-**Lower where it should be.** We count 781 campus closures, not SHEEO's
-roughly 12,000 closed locations, because we count only campuses with their own
-IPEDS record. Most closed FSA locations are extension and teaching sites, not
-campuses. We also exclude the district programs and mergers that both SHEEO
+**Lower where it should be.** We count 781 campus closures: campuses that
+report to the federal government separately. That is a floor, not a full count.
+Since 1996, about 14,000 locations closed while their college kept operating,
+and most report under their parent. That group includes real branch campuses but
+also extension, teaching and high-school sites, and federal data can't separate
+them. We also exclude the district programs and mergers that both SHEEO
 and Kelchen count.
 
 ## The rule in detail
@@ -86,7 +92,7 @@ and Kelchen count.
 2. It matches one IPEDS institution: public or nonprofit at any level except
    public under-two-year, or for-profit at any level.
 3. Evidence the institution stopped. That means **one** of:
-   - no other location was open on the close date;
+   - federal records don't show any other location still open on the close date;
    - no institution under the same OPEID6 reported to IPEDS as active after the
      closure year;
    - for the frozen historical base table only, an editor-confirmed closure in
@@ -120,13 +126,17 @@ applies.
 1. **Dropping out of IPEDS is strong evidence, not proof.** Some merged schools
    simply disappear from IPEDS (University of the Rockies did). Editors confirm
    those, and they move to the `mergers` tab.
-2. **Recent years lag.** IPEDS runs a year or more behind, so 2025–26 closures
+2. **Both signals depend on federal-aid participation.** A school that left
+   the federal aid program but kept teaching would look closed to us. That's
+   rare, and editors check flagged cases.
+3. **Recent years lag.** IPEDS runs a year or more behind, so 2025–26 closures
    rely on editors.
-3. **Some thresholds are judgment calls,** such as "main campus closed within a
+4. **Some thresholds are judgment calls,** such as "main campus closed within a
    year" and "never reports again after the closure year."
-4. **"Associate degree or higher"** uses the highest degree a school offered in
+5. **Campus counts are a floor.** Only separately reported campuses count.
+6. **"Associate degree or higher"** uses the highest degree a school offered in
    IPEDS before closing. SHEEO used FSA program length.
-5. **This is our method, not a federal standard.** We publish the rule and this
+7. **This is our method, not a federal standard.** We publish the rule and this
    reconciliation so it can be checked.
 
 ## Sources
