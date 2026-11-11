@@ -1026,3 +1026,29 @@ class TestOverridesQueueSelfHealing:
         stale = [{"closure_event_id": "fsa:03089400:2005-09-26", "review_status": "resolved",
                   "closure_type": "", "publication_decision": ""}]
         assert pgs._build_overrides_queue(ev, stale)[1:] == []
+
+
+class TestMergersTab:
+    def test_lists_confirmed_mergers_and_affiliations_only(self, tmp_path):
+        import csv as _csv
+        p = tmp_path / "events.csv"
+        fields = ["closure_event_id", "school_name", "city", "state", "opeid8", "control_label", "program_level",
+                  "fsa_closed_date_iso", "closed_date_iso", "review_status", "closure_type",
+                  "closure_type_basis", "date_evidence_url", "replacement_opeid8"]
+        rows = [
+            {"closure_event_id": "a", "school_name": "Watkins", "fsa_closed_date_iso": "2020-06-30",
+             "review_status": "resolved", "closure_type": "merger_absorption", "date_evidence_url": "u1"},
+            {"closure_event_id": "b", "school_name": "EDS", "fsa_closed_date_iso": "2017-06-30",
+             "review_status": "resolved", "closure_type": "affiliation_or_governance_change"},
+            {"closure_event_id": "c", "school_name": "Mills", "fsa_closed_date_iso": "2022-06-30",
+             "review_status": "pending", "closure_type": "institutional_closure"},  # possible merger, unconfirmed
+        ]
+        with p.open("w", encoding="utf-8", newline="") as fh:
+            w = _csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        data = pgs._build_mergers_data(p)
+        assert data[0] == pgs.MERGERS_HEADER
+        got = [dict(zip(data[0], r)) for r in data[1:]]
+        assert [(g["school_name"], g["outcome"]) for g in got] == [("Watkins", "merger"), ("EDS", "affiliation")]
+        assert got[0]["evidence_url"] == "u1" and got[0]["fsa_closed_year"] == "2020"

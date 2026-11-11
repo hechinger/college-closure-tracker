@@ -11,7 +11,8 @@ feeds the tracker's tables and Datawrapper charts.
   New closures go to editors in the Sheet's `overrides` tab.
 - **On demand:** `.github/workflows/publish-editorial-overrides.yml` pulls
   editors' decisions from the `overrides` tab and republishes `published`,
-  `by_year` and `by_state`.
+  `by_year`, `by_state` and `mergers` (editor-confirmed mergers and
+  affiliations, which are excluded from closure counts).
 
 # How we count college closures
 
@@ -68,7 +69,7 @@ is **not** a separate campus closure.
 |---|---|
 | Locations with no IPEDS record of their own, including those matched only through the parent college | They cannot be verified as campuses. Most are extension or teaching sites, and at least 1,474 are K-12 dual-enrollment or cohort sites, such as "Viterbo University – Portage High School". |
 | Locations of chains that shut down entirely | Already counted once, through the institution closure |
-| Foreign locations | Out of scope |
+| Foreign locations (e.g. London, Dubai, Kuala Lumpur campuses) | Out of scope; applies to new closures too. Puerto Rico and other U.S. jurisdictions are included. |
 | Exact FSA identifier replacements | Operations continued under the new ID |
 | Locations IPEDS marks as combined into another institution | The location likely continued |
 | Public under-two-year programs (IPEDS sector 7), plus district programs IPEDS codes as public 2-year, by editorial override | Overwhelmingly adult programs run by K-12 districts, BOCES and career-tech centers, some housed in high schools; not colleges. Kelchen et al. note the same pattern but count them. |
@@ -93,16 +94,16 @@ suggested exclusion is attached where one applies.
 | Mergers | counted as closures | counted (paper says it can't track them yet) | flagged or excluded |
 | District career-tech programs | counted | counted | excluded |
 
-**Kelchen**, main campuses, Jan 1996 – Nov 2023: his paper reports 1,661–1,671 closures; we count **1,751**.
+**Kelchen**, main campuses, Jan 1996 – Nov 2023: his paper reports 1,661–1,671 closures; we count **1,749**.
 
 | Sector | Kelchen | Ours |
 |---|---|---|
 | For-profit 2-year | 1,222 | 1,305 |
-| For-profit 4-year | 100 | 105 |
+| For-profit 4-year | 100 | 104 |
 | Nonprofit 4-year | 142 | 150 |
 | Nonprofit 2-year | 152 | 178 |
 | Public 4-year | 2 | 2 |
-| Public 2-year | 45 | 11 |
+| Public 2-year | 45 | 10 |
 
 Our "2-year" includes under-two-year schools, as Kelchen's does. The public
 2-year gap is the district career-tech programs we exclude.
@@ -110,10 +111,10 @@ Our "2-year" includes under-two-year schools, as Kelchen's does. The public
 **SHEEO method**, rerun on current FSA data by
 `scripts/benchmark_sheeo_method.py`, 2008–2023:
 
-- The method gives **848** closures. We count **1,038**, and **816** are on both lists.
-- It reproduces the earlier Hechinger figure exactly: **287** institutions offering an associate degree or higher, 62% for-profit. Our count is **417**, 66% for-profit.
-- **222 we count that SHEEO doesn't:**
-  - 220: one location still listed as open in FSA's records, which makes SHEEO drop the school (Presentation College, Brightwood, Bramson ORT);
+- The method gives **848** closures. We count **1,037**, and **816** are on both lists.
+- It reproduces the earlier Hechinger figure exactly: **287** institutions offering an associate degree or higher, 62% for-profit. Our count is **415**, 66% for-profit.
+- **221 we count that SHEEO doesn't:**
+  - 219: one location still listed as open in FSA's records, which makes SHEEO drop the school (Presentation College, Brightwood, Bramson ORT);
   - 2: gaps in location numbering.
 - **32 SHEEO counts that we don't:**
   - 12 are held for our editors because the IPEDS match is unresolved;
@@ -124,7 +125,7 @@ Our "2-year" includes under-two-year schools, as Kelchen's does. The public
   - 1 has no main-campus record.
 
 **SHEEO / Hechinger "Proof Points" (2004–2021):** 861 institutions and 9,499
-campuses. We count 1,083 institutions and 594 campuses. SHEEO counted every closed
+campuses. We count 1,082 institutions and 594 campuses. SHEEO counted every closed
 location, including sites with no IPEDS record of their own, which we exclude, and
 about 500 merger and consolidation "campuses".
 
@@ -132,7 +133,8 @@ about 500 merger and consolidation "campuses".
 
 1. **Disappearing from IPEDS is evidence, not proof.** A school absorbed by
    another can simply vanish from IPEDS, as University of the Rockies did when
-   it was absorbed into Ashford. The "combined" status catches some mergers, not all.
+   it was absorbed into Ashford. The "combined" status catches some mergers, not all;
+   editors confirm the rest, and confirmed mergers are listed on the `mergers` tab.
 2. **Recent years lag.** IPEDS runs a year or more behind, so 2025–26 closures
    rely on editor confirmation.
 3. **Our thresholds are judgment calls**: "main campus closed within a year,"

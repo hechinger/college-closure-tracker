@@ -1025,3 +1025,11 @@ class TestCampusNeedsOwnIpedsRecord:
         r = classify_records([self._loc("matched_opeid8_yr2019")],
                              rt01_by_opeid6=self._RT01, auto_baseline=self._BASE)[0]
         assert r["publication_decision"] == "include_campus"
+
+
+class TestForeignScopeRule:
+    def test_new_foreign_closure_is_excluded_without_review(self):
+        r = classify_records([_rec(country="ENGLAND", closed_date_iso="2026-10-01", closed_year="2026")],
+                             auto_baseline=frozenset())[0]
+        assert r["closure_type"] == "foreign_location"
+        assert (r["review_required"], r["publication_decision"]) == ("false", "exclude")

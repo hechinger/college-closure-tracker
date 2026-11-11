@@ -21,6 +21,7 @@ from push_to_gsheet import (
     _build_by_year_data,
     _build_overrides_queue,
     _build_published_dicts,
+    _build_mergers_data,
     _build_readme_data,
     _latest_events_csv,
     _load_rows,
@@ -134,6 +135,7 @@ def build_bundle(
     _write_table(by_state_path, by_state)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     _write_table(readme_path, _build_readme_data(generated_at))
+    _write_table(out_dir / f"mergers_{release_date}.csv", _build_mergers_data(events_path))
 
     previous = _read_dicts(previous_published)
     changes = _build_change_report(published, previous)

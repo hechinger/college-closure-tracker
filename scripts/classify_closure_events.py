@@ -747,7 +747,9 @@ def classify_records(
         exclusion = "" if reinstated else _auto_exclusion(r, is_main, closure_type, review_reasons)
         if exclusion:
             excl_type, excl_basis = exclusion
-            if event_id in (auto_baseline or frozenset()):
+            # Foreign locations are a scope rule, not an editorial judgment:
+            # excluded even when new since the base table.
+            if event_id in (auto_baseline or frozenset()) or excl_type == "foreign_location":
                 closure_type = excl_type
                 review_required = "false"
                 review_status = AUTO_REVIEW_STATUS

@@ -564,6 +564,40 @@ def _open_or_create_tab(sh: gspread.Spreadsheet, tab: str, ncols: int) -> gsprea
         return sh.add_worksheet(title=tab, rows=50_000, cols=ncols)
 
 
+# Editor-confirmed outcomes where operations continued under another
+# institution; excluded from closure counts and listed on the mergers tab.
+MERGER_TYPES = {
+    "merger_absorption": "merger",
+    "affiliation_or_governance_change": "affiliation",
+}
+
+MERGERS_HEADER = [
+    "school_name", "city", "state", "opeid8", "control_label", "program_level",
+    "fsa_closed_date_iso", "fsa_closed_year", "outcome", "basis",
+    "evidence_url", "replacement_opeid8", "closure_event_id",
+]
+
+
+def _build_mergers_data(path: Path) -> list[list]:
+    """Rows for the mergers tab: editor-confirmed mergers and affiliations, newest first."""
+    with path.open(encoding="utf-8", newline="") as fh:
+        rows = [
+            r for r in csv.DictReader(fh)
+            if r.get("review_status") == "resolved" and r.get("closure_type") in MERGER_TYPES
+        ]
+    rows.sort(key=lambda r: r.get("fsa_closed_date_iso", "") or r.get("closed_date_iso", ""), reverse=True)
+    out: list[list] = [MERGERS_HEADER]
+    for r in rows:
+        fsa_date = r.get("fsa_closed_date_iso", "") or r.get("closed_date_iso", "")
+        out.append([
+            r.get("school_name", ""), r.get("city", ""), r.get("state", ""), r.get("opeid8", ""),
+            r.get("control_label", ""), r.get("program_level", ""), fsa_date, fsa_date[:4],
+            MERGER_TYPES[r["closure_type"]], r.get("closure_type_basis", ""),
+            r.get("date_evidence_url", ""), r.get("replacement_opeid8", ""), r.get("closure_event_id", ""),
+        ])
+    return out
+
+
 def _build_readme_data(generated_at: str = "") -> list[list]:
     """Return README tab content as a list of single-cell rows."""
     return [
@@ -593,6 +627,7 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["published — resolved and auto_resolved institution_closure and campus_closure rows only."],
         ["by_year — institution-only total plus separate campus/all-event columns."],
         ["by_state — institution-only total plus separate campus/all-event columns."],
+        ["mergers — editor-confirmed mergers and affiliations (excluded from closure counts), with basis and source."],
         [""],
         ["OVERRIDES WORKFLOW"],
         ["review_status: pending | resolved | needs_more_evidence | needs_re_review"],
@@ -618,8 +653,8 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["  IPEDS used to match institutions and add characteristics, not to test continued operation."],
         ["Ours: main campus closed AND evidence the institution stopped (no other open location, no active"],
         ["  IPEDS reporting afterwards, or editor confirmation); possible mergers go to editors."],
-        ["As of the November 2026 build: 1,751 main-campus closures 1996-Nov 2023 vs Kelchen's 1,661-1,671;"],
-        ["  2008-2023: SHEEO method 848, ours 1,038, 816 on both lists; associate-or-higher 417 vs SHEEO's 287."],
+        ["As of the November 2026 build: 1,749 main-campus closures 1996-Nov 2023 vs Kelchen's 1,661-1,671;"],
+        ["  2008-2023: SHEEO method 848, ours 1,037, 816 on both lists; associate-or-higher 415 vs SHEEO's 287."],
         ["  scripts/benchmark_sheeo_method.py reruns the SHEEO comparison weekly and explains each difference."],
         ["LIMITATIONS: disappearing from IPEDS is evidence, not proof (some mergers vanish quietly);"],
         ["  recent years rely on editors because IPEDS lags; campus counts cover IPEDS-reported campuses only;"],
@@ -696,6 +731,7 @@ def push(sheet_id: str, tab: str) -> int:
         print("Writing aggregated chart tabs…")
         _write_tab(sh, "by_year", by_year)
         _write_tab(sh, "by_state", by_state)
+        _write_tab(sh, "mergers", _build_mergers_data(events_path))
         from datetime import datetime, timezone
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         _write_tab(sh, "readme", _build_readme_data(generated_at))
