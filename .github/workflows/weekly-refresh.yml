@@ -1,0 +1,78 @@
+name: Weekly closure list refresh
+
+on:
+  schedule:
+    - cron: '0 14 * * 2'   # Tuesdays 14:00 UTC (after FSA releases weekly file)
+  workflow_dispatch:        # also triggerable manually from the Actions tab
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      id-token: write       # required for Workload Identity Federation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-actions-sheets@project-d5e32b84-d94f-446f-9b5.iam.gserviceaccount.com
+
+      - name: Download FSA weekly school file
+        run: python scripts/download_weekly_closed_school_search_file.py
+
+      - name: Run pipeline
+        run: |
+          python scripts/parse_federal_sources.py
+          python scripts/build_ipeds_crosswalk.py
+          python scripts/classify_closure_events.py
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Push closure list to Google Sheet
+        env:
+          CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
+        run: python scripts/push_to_gsheet.py --sheet "$CLOSURE_LIST_SHEET_ID"
+
+      - name: Open issue if new closures detected
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const countStr = fs.readFileSync('data/derived/new_closures_count.txt', 'utf8').trim();
+            const count = parseInt(countStr);
+            if (count > 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Weekly refresh: ${count} new closure(s) need review`,
+                body: `The weekly pipeline found **${count}** new closure(s) not previously in the Sheet.\n\n` +
+                      `1. Review the \`closure_list\` tab in the Google Sheet.\n` +
+                      `2. Add any editorial overrides to the \`overrides\` tab.\n` +
+                      `3. Trigger the **Publish Editorial Overrides** workflow when ready.`
+              });
+            }
+
+      - name: Open issue on pipeline failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Weekly refresh FAILED — ${new Date().toISOString().slice(0,10)}`,
+              body: `The weekly closure list refresh failed. Check the [Actions log](` +
+                    `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`
+            });

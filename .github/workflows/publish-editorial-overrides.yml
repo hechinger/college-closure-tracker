@@ -1,0 +1,57 @@
+name: Publish editorial overrides
+
+on:
+  workflow_dispatch:        # manually triggered from the Actions tab after editor review
+
+permissions:
+  contents: write
+  id-token: write           # required for Workload Identity Federation
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -r requirements.txt
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-actions-sheets@project-d5e32b84-d94f-446f-9b5.iam.gserviceaccount.com
+
+      - name: Pull overrides from Google Sheet
+        env:
+          CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
+        run: |
+          python scripts/pull_gsheet_overrides.py \
+            --sheet "$CLOSURE_LIST_SHEET_ID" \
+            --output data/manual/closure_type_overrides.csv
+
+      - name: Re-run classifier with updated overrides
+        run: python scripts/classify_closure_events.py
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Update Sheet published tab
+        env:
+          CLOSURE_LIST_SHEET_ID: ${{ secrets.CLOSURE_LIST_SHEET_ID }}
+        run: |
+          python scripts/push_to_gsheet.py \
+            --sheet "$CLOSURE_LIST_SHEET_ID" --tab published
+
+      - name: Commit overrides and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/manual/closure_type_overrides.csv
+          git diff --cached --quiet || \
+            git commit -m "chore: publish editorial overrides [skip ci]"
+          git push

@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.secrets/
+data/raw/
+data/interim/
+data/derived/
+data_pipelines/federal_closure/raw/
+outputs/
+*.zip
+*.xlsx
+*.xls
