@@ -44,16 +44,38 @@ from classify_closure_events import (
 PROJECT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = PROJECT / "data" / "manual" / "closure_type_overrides.csv"
 
-# One combined review and decision record per closure_event_id. Context and
-# candidate fields are pipeline-owned; decision/evidence fields are editorial.
+# One combined review and decision record per closure_event_id, laid out for
+# an editor reading left to right: who/where/when, why it was flagged and the
+# pipeline's suggestion, the evidence, then the editorial decision columns,
+# then technical IDs. Context columns are pipeline-owned and refreshed on every
+# push; only the decision columns are editorial. The suggestion columns are
+# never applied: a row changes classification only when an editor sets
+# review_status=resolved and fills the decision columns.
 OVERRIDES_FIELDS = [
+    # --- who / where / when (pipeline) ---
     "closure_event_id",
-    "opeid8",
     "school_name",
+    "city",
     "state",
     "fsa_closed_date_iso",
-    "review_reason",
-    "candidate_closure_scope",
+    # --- why flagged + suggestion (pipeline) ---
+    "why_flagged",
+    "what_to_check",
+    "suggested_decision",
+    "suggested_closure_type",
+    # --- evidence (pipeline) ---
+    "control",
+    "program_level",
+    "highest_degree",
+    "enrollment",
+    "ipeds_name",
+    "college_navigator_url",
+    "ipeds_last_active_year",
+    "other_locations_evidence",
+    "main_campus_closed_date",
+    "records_held_by",
+    "news_search_url",
+    # --- editorial decision ---
     "review_status",
     "publication_decision",
     "closure_type",
@@ -65,12 +87,16 @@ OVERRIDES_FIELDS = [
     "verified_closed_date_iso",
     "date_basis",
     "date_evidence_url",
-    "replacement_opeid8",
-    "replacement_effective_date_iso",
-    "evidence_fingerprint",
     "editor_note",
     "reviewed_by",
     "reviewed_on",
+    # --- technical (pipeline) ---
+    "opeid8",
+    "review_reason",
+    "candidate_closure_scope",
+    "replacement_opeid8",
+    "replacement_effective_date_iso",
+    "evidence_fingerprint",
 ]
 
 _SCOPES = [

@@ -1095,3 +1095,55 @@ class TestInstitutionOnlyPublishedTab:
         scope = pub_hdr.index("closure_scope")
         assert pub_rows and all(r[scope] == "institution" for r in pub_rows)
         assert all(r[camp_hdr.index("closure_scope")] == "campus" for r in camp_rows)
+
+
+class TestOverridesReviewContext:
+    def _ev(self, **kw):
+        e = {"closure_event_id": "fsa:00100200:2025-05-30", "opeid8": "00100200", "opeid6": "001002",
+             "location_suffix": "00", "school_name": "Test Tech", "city": "Erie", "state": "PA",
+             "closed_year": "2025", "closed_date_iso": "2025-05-30", "review_required": "true",
+             "review_status": "pending", "candidate_closure_scope": "institution",
+             "closure_type": "for_profit_closure", "unitid": "216427", "ipeds_cache_max_year": "2025",
+             "parent_continued_basis": "RT01 sibling location active on event date: 00100201",
+             "review_reason": "operational_closure_unverified|record_custodian_available"}
+        e.update(kw)
+        return e
+
+    def _row(self, events):
+        q = pgs._build_overrides_queue(events, [])
+        return [dict(zip(q[0], r)) for r in q[1:]]
+
+    def test_recent_main_campus_gets_specific_guidance_and_links(self):
+        r = self._row([self._ev()])[0]
+        assert "too recently for IPEDS" in r["why_flagged"]
+        assert r["suggested_decision"] == "check: likely include"
+        assert r["college_navigator_url"].endswith("id=216427")
+        assert "Test+Tech" in r["news_search_url"]
+        assert r["other_locations_evidence"].startswith("FSA lists another location open")
+        assert "RT01" not in r["other_locations_evidence"]
+
+    def test_possible_merger_suggestion(self):
+        r = self._row([self._ev(closed_year="2020", review_reason="ipeds_status_combined_with_other_institution")])[0]
+        assert r["suggested_decision"] == "check: possible merger"
+        assert r["suggested_closure_type"] == "merger_absorption"
+
+    def test_location_shows_main_campus_close_date(self):
+        main = self._ev(review_required="false", review_status="auto_resolved")
+        loc = self._ev(closure_event_id="fsa:00100201:2025-04-01", opeid8="00100201", location_suffix="01",
+                       candidate_closure_scope="campus", closure_type="unclassified",
+                       review_reason="parent_continuation_unknown")
+        rows = self._row([main, loc])
+        assert [r["main_campus_closed_date"] for r in rows] == ["2025-05-30"]
+
+    def test_editor_resolved_rows_show_no_suggestion(self):
+        ev = self._ev(review_required="false", review_status="resolved", closure_type="merger_absorption")
+        old = [{"closure_event_id": ev["closure_event_id"], "review_status": "resolved",
+                "closure_type": "merger_absorption", "publication_decision": "exclude"}]
+        q = pgs._build_overrides_queue([ev], old)
+        r = dict(zip(q[0], q[1]))
+        assert r["suggested_decision"] == "" and r["why_flagged"].startswith("Decided by an editor")
+        assert r["closure_type"] == "merger_absorption"   # editorial column untouched
+
+    def test_suggestions_never_fill_decision_columns(self):
+        r = self._row([self._ev()])[0]
+        assert r["publication_decision"] == "" and r["closure_type"] == "" and r["review_status"] == "pending"
