@@ -70,6 +70,10 @@ CONSOLIDATION_WINDOW_YEARS = 5
 # relationships from decades before the eventual close.
 REPLACEMENT_EVENT_WINDOW_DAYS = 730
 
+# Micronesia, Marshall Islands, Palau: sovereign nations in free association
+# with the U.S., not territories. FSA codes them as states with no country.
+FREELY_ASSOCIATED_STATES = frozenset({"FM", "MH", "PW"})
+
 EVENT_TYPES = (
     "location_administrative",
     "branch_closure",
@@ -533,8 +537,11 @@ def _main_closed_near(main_dates, event_date: date | None, days: int = 365) -> b
 
 def _auto_exclusion(row: dict, is_main: bool, closure_type: str, review_reasons: list[str]) -> tuple[str, str] | None:
     """Return (closure_type, basis) for rows that can never be published, else None."""
-    if (row.get("country") or "").strip():
-        return "foreign_location", "Location outside the United States; out of scope"
+    if (row.get("country") or "").strip() or (row.get("state") or "").strip() in FREELY_ASSOCIATED_STATES:
+        # U.S. territories (PR, GU, VI, AS, MP) are in scope; the freely
+        # associated states are sovereign nations, though FSA gives them a
+        # state code and no country.
+        return "foreign_location", "Location outside the United States and its territories; out of scope"
     if closure_type == "location_closed_with_institution":
         return closure_type, (
             "Location closed with its institution (main campus closed within a year; parent not active "

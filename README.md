@@ -16,140 +16,128 @@ feeds the tracker's tables and Datawrapper charts.
 
 # How we count college closures
 
-*Methods note for editors and readers. Figures are from the 2026-11-11 dry run;
-the pipeline reruns weekly and every count below is regenerated from source data.
-The published table covers closures from 1996 onward.*
+*Figures as of the 2026-11-11 build. The pipeline reruns weekly, so they move
+slightly as federal data updates. The published table covers 1996 onward.*
 
-## In one sentence
+## The rule in brief
 
-A college counts as closed when the federal record for its **main campus**
-closes **and** there is structured evidence that the **institution** itself
-stopped operating, not just that one location or federal identifier ended.
+- **A college counts as closed** when the federal record for its main campus
+  closes **and** federal data show the institution itself stopped operating:
+  no other location was still open, or the school never again reported to
+  IPEDS as an active institution.
+- **Mergers and affiliations are not closures.** When a school's operations
+  continued under another institution, an editor confirms it and it is listed
+  on the `mergers` tab instead.
+- **Out of scope:** campuses with no IPEDS record of their own (mostly
+  extension and teaching sites, including high-school dual-enrollment sites),
+  K-12 district and career-tech programs, and locations outside the U.S. and
+  its territories. Puerto Rico, Guam, the U.S. Virgin Islands, American Samoa
+  and the Northern Marianas are included.
+- **Every decision is structured or editorial, never a name match.** Each row
+  records the evidence used, and editors can override any of them with a
+  documented source.
+- **New closures are reviewed by an editor** before they publish.
 
-## Sources
+## Why our numbers differ from SHEEO's and Kelchen's
 
-| Source | What we use it for |
-|---|---|
-| FSA closed-school file (weekly) | Every closed Title IV location, with its close date. This is where closures come from. |
-| FSA Weekly School File (RT01, RT06, RT11) | Whether other locations of the same school were still listed as open; dated identifier changes; who holds student records |
-| IPEDS directory files, 1995–2025 | Matching each closure to a real institution; sector, level, highest degree, enrollment; whether the institution kept reporting after the closure; IPEDS "combined with another institution" status |
-| Financial Health tracker (one-time snapshot, base table only) | Editor-confirmed closure announcements for recent closures that IPEDS cannot test yet |
-| Editors (overrides tab) | Final say on any case, with a documented basis and source URL |
+| | Their count | Ours |
+|---|---|---|
+| SHEEO method, closures 2008–2023 | 848 | 1,036 |
+| Same, colleges offering an associate degree or higher | 287 (Hechinger's earlier "nearly 300") | 415 |
+| Kelchen et al. (Federal Reserve, 2025), main campuses, Jan 1996 – Nov 2023 | 1,661–1,671 | 1,748 |
 
-## The rule
+**Higher than SHEEO, mainly because of one gap in FSA's records.** SHEEO's
+method counts a college only when every one of its federal location records is
+marked closed. FSA often leaves one location marked "open" years after a school
+shut. Examples are ITT Tech, Brightwood College and Presentation College. That
+drops 219 closed colleges from the SHEEO count; IPEDS shows each of them
+stopped operating. Going the other way, we leave out 33 schools SHEEO counts:
 
-**Institution closure.** All of the following:
+- 12 district or career-tech programs, or administrative offices;
+- 3 satellite IDs belonging to colleges that are still open, such as Olivet
+  Nazarene;
+- 3 mergers, affiliations or reinstatements;
+- 15 still unresolved (awaiting an editor, or no main-campus record).
+
+**Higher than Kelchen, mainly because the federal file has grown.** The
+current FSA file lists 1,973 main-campus closures for his period, about 250
+more than the roughly 1,726 in his November 2023 source (1,671 matched plus 55
+he couldn't match). We publish 1,748 of those 1,973. The rest are excluded or
+awaiting an editor:
+
+- 37 district programs or administrative offices;
+- 6 mergers, affiliations or identifier changes;
+- 6 reinstated schools;
+- 176 awaiting editors.
+
+His list isn't public, so we can't match the gap school by school.
+
+**Lower where it should be.** We count 781 campus closures, not SHEEO's
+roughly 12,000 closed locations, because we count only campuses with their own
+IPEDS record. Most closed FSA locations are extension and teaching sites, not
+campuses. We also exclude the district programs and mergers that both SHEEO
+and Kelchen count.
+
+## The rule in detail
+
+**Institution closure** requires all of the following:
 
 1. FSA closed the main-campus record (OPEID ending in `00`).
-2. The record matches a single historical IPEDS institution: a public or
-   nonprofit college of any level except public under-two-year (see below),
-   or a for-profit of any level.
-3. The institution stopped operating, shown by **one** of these:
-   - no other location of the school was open in FSA's records on the close date;
-   - no institution under the same OPEID6 reported to IPEDS as active after
-     the closure year (FSA keeps stale "open" rows for schools that are gone,
-     such as ITT Tech, Brightwood and Bethany);
+2. It matches one IPEDS institution: public or nonprofit at any level except
+   public under-two-year, or for-profit at any level.
+3. Evidence the institution stopped. That means **one** of:
+   - no other location was open on the close date;
+   - no institution under the same OPEID6 reported to IPEDS as active after the
+     closure year;
    - for the frozen historical base table only, an editor-confirmed closure in
      the Financial Health tracker.
-4. No sign it was really a merger. If IPEDS marks the school as combined with
-   another institution, the case goes to editors.
-5. It was not later reinstated, and no exact replacement identifier exists.
+4. No sign of a merger. If IPEDS marks the school "combined with another
+   institution," the case goes to an editor.
+5. Not later reinstated, and no exact replacement identifier.
 
-**Campus closure.** A non-main location with **its own IPEDS record** (its own
-OPEID8 in IPEDS, not just the parent's) closed
-while the school kept operating: another location was open on the date, or
-the school kept reporting to IPEDS as active. If the whole chain shut down
-instead (main campus closed within a year and the school disappeared from
-IPEDS), the location is counted once, through the institution closure, and
-is **not** a separate campus closure.
+**Campus closure:** a location with **its own** IPEDS record closed while the
+school kept operating. When a whole chain shut down, its locations are counted
+once, through the institution closure.
 
-**Excluded automatically, with the reason recorded and open to editor override:**
-
-| Excluded | Why |
+| Excluded automatically (reason recorded; editors can override) | Why |
 |---|---|
-| Locations with no IPEDS record of their own, including those matched only through the parent college | They cannot be verified as campuses. Most are extension or teaching sites, and at least 1,474 are K-12 dual-enrollment or cohort sites, such as "Viterbo University – Portage High School". |
-| Locations of chains that shut down entirely | Already counted once, through the institution closure |
-| Foreign locations (e.g. London, Dubai, Kuala Lumpur campuses) | Out of scope; applies to new closures too. Puerto Rico and other U.S. jurisdictions are included. |
+| Locations without their own IPEDS record | Can't be verified as campuses. Most are extension or teaching sites, and at least 1,474 are K-12 sites such as "Viterbo University – Portage High School". |
+| Locations of chains that shut down entirely | Already counted once, through the institution |
+| Public under-two-year programs (IPEDS sector 7), plus district programs coded public 2-year (by override) | Adult programs run by K-12 districts, BOCES and career-tech centers; not colleges |
+| IPEDS administrative units | Not instructional |
 | Exact FSA identifier replacements | Operations continued under the new ID |
-| Locations IPEDS marks as combined into another institution | The location likely continued |
-| Public under-two-year programs (IPEDS sector 7), plus district programs IPEDS codes as public 2-year, by editorial override | Overwhelmingly adult programs run by K-12 districts, BOCES and career-tech centers, some housed in high schools; not colleges. Kelchen et al. note the same pattern but count them. |
-| IPEDS administrative units | Not instructional institutions |
+| Locations IPEDS marks as combined into another institution | Likely continued |
+| Foreign locations, including the freely associated states (Micronesia, Marshall Islands, Palau) | Out of scope |
 
-**Never counted on their own:** location-name patterns, OPEID suffixes, RT11
-record custodians, or Title IV withdrawal by itself.
-
-**Human review.** Ambiguous cases go to editors: possible mergers, closures
-with no usable IPEDS match, and schools that kept reporting after their main
-campus closed (about 280 rows). **Every closure that appears after the base
-table was frozen also goes to an editor**, even if it meets the rule. A
-suggested exclusion is attached where one applies.
-
-## How this compares with other counts
-
-| | SHEEO method | Kelchen et al. (Fed, 2025) | Ours |
-|---|---|---|---|
-| A closure means | every location under the OPEID6 closed | main campus closed (first closure) | main campus closed **and** evidence the institution stopped |
-| Uses IPEDS to | — | link closures to institutions and add characteristics | link closures **and** test whether the school kept operating |
-| Stale "open" FSA rows | school silently dropped | ignored | resolved with IPEDS |
-| Mergers | counted as closures | counted (paper says it can't track them yet) | flagged or excluded |
-| District career-tech programs | counted | counted | excluded |
-
-**Kelchen**, main campuses, Jan 1996 – Nov 2023: his paper reports 1,661–1,671 closures; we count **1,749**.
-
-| Sector | Kelchen | Ours |
-|---|---|---|
-| For-profit 2-year | 1,222 | 1,305 |
-| For-profit 4-year | 100 | 104 |
-| Nonprofit 4-year | 142 | 150 |
-| Nonprofit 2-year | 152 | 178 |
-| Public 4-year | 2 | 2 |
-| Public 2-year | 45 | 10 |
-
-Our "2-year" includes under-two-year schools, as Kelchen's does. The public
-2-year gap is the district career-tech programs we exclude.
-
-**SHEEO method**, rerun on current FSA data by
-`scripts/benchmark_sheeo_method.py`, 2008–2023:
-
-- The method gives **848** closures. We count **1,037**, and **816** are on both lists.
-- It reproduces the earlier Hechinger figure exactly: **287** institutions offering an associate degree or higher, 62% for-profit. Our count is **415**, 66% for-profit.
-- **221 we count that SHEEO doesn't:**
-  - 219: one location still listed as open in FSA's records, which makes SHEEO drop the school (Presentation College, Brightwood, Bramson ORT);
-  - 2: gaps in location numbering.
-- **32 SHEEO counts that we don't:**
-  - 12 are held for our editors because the IPEDS match is unresolved;
-  - 11 are district career-tech programs or administrative offices;
-  - 3 are FSA satellite IDs that belong to colleges still open, Olivet Nazarene and Lindenwood among them;
-  - 3 we exclude on purpose (Watkins, a merger; Episcopal Divinity, an affiliation; one reinstatement);
-  - 2 are possible mergers, including Mills College;
-  - 1 has no main-campus record.
-
-**SHEEO / Hechinger "Proof Points" (2004–2021):** 861 institutions and 9,499
-campuses. We count 1,082 institutions and 594 campuses. SHEEO counted every closed
-location, including sites with no IPEDS record of their own, which we exclude, and
-about 500 merger and consolidation "campuses".
+**Human review.** Possible mergers, closures without a usable IPEDS match, and
+schools that kept reporting after their main campus closed go to editors on the
+`overrides` tab (about 240 rows). Every closure first seen after the base table
+was frozen also goes to an editor, with a suggested decision where one
+applies.
 
 ## Limitations
 
-1. **Disappearing from IPEDS is evidence, not proof.** A school absorbed by
-   another can simply vanish from IPEDS, as University of the Rockies did when
-   it was absorbed into Ashford. The "combined" status catches some mergers, not all;
-   editors confirm the rest, and confirmed mergers are listed on the `mergers` tab.
+1. **Dropping out of IPEDS is strong evidence, not proof.** Some merged schools
+   simply disappear from IPEDS (University of the Rockies did). Editors confirm
+   those, and they move to the `mergers` tab.
 2. **Recent years lag.** IPEDS runs a year or more behind, so 2025–26 closures
-   rely on editor confirmation.
-3. **Our thresholds are judgment calls**: "main campus closed within a year,"
-   and "never reports after the closure year." Different windows would shift
-   counts slightly.
-4. **Campus counts cover IPEDS-reported campuses only.** Extension and
-   teaching sites without their own IPEDS record are left out, so our campus
-   count is lower than SHEEO's location count.
-5. **District career-tech programs are excluded**, unlike SHEEO and Kelchen.
-   This explains most of the public 2-year gap with Kelchen.
-6. **"Associate degree or higher"** uses IPEDS highest degree offered in the
-   last year before closure. SHEEO used FSA program length, so the two
-   definitions differ slightly.
-7. **This is our method, not a published standard.** We publish the rule and
-   the reconciliation so it can be checked.
+   rely on editors.
+3. **Some thresholds are judgment calls,** such as "main campus closed within a
+   year" and "never reports again after the closure year."
+4. **"Associate degree or higher"** uses the highest degree a school offered in
+   IPEDS before closing. SHEEO used FSA program length.
+5. **This is our method, not a federal standard.** We publish the rule and this
+   reconciliation so it can be checked.
+
+## Sources
+
+FSA closed-school file and Weekly School File (weekly); IPEDS directory and
+enrollment files, 1995–2025; a one-time snapshot of the Hechinger Financial
+Health tracker's confirmed closures (base table only); and editors' decisions,
+each with a source link.
+[Kelchen et al., FEDS 2025-003](https://www.federalreserve.gov/econres/feds/files/2025003pap.pdf).
+[SHEEO college closures project](https://sheeo.org/project/college-closures/).
+`scripts/benchmark_sheeo_method.py` reruns the SHEEO comparison each week.
 
 ## Reproducing it
 

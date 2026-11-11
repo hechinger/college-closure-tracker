@@ -1033,3 +1033,13 @@ class TestForeignScopeRule:
                              auto_baseline=frozenset())[0]
         assert r["closure_type"] == "foreign_location"
         assert (r["review_required"], r["publication_decision"]) == ("false", "exclude")
+
+
+class TestTerritoryScope:
+    def test_freely_associated_state_is_foreign(self):
+        r = classify_records([_rec(state="FM")], auto_baseline=frozenset())[0]
+        assert r["closure_type"] == "foreign_location"
+
+    def test_us_territory_stays_in_scope(self):
+        r = classify_records([_rec(state="GU")], auto_baseline=frozenset())[0]
+        assert r["closure_type"] != "foreign_location"
