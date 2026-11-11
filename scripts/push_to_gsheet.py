@@ -187,6 +187,13 @@ def _load_rows(
     return result
 
 
+def _has_editorial_decision(row: dict | None) -> bool:
+    """True when an overrides row carries an editor's decision or note."""
+    return bool(row) and any(
+        str(row.get(f, "")).strip() for f in ("closure_type", "publication_decision", "editor_note", "reviewed_by")
+    )
+
+
 def _build_overrides_queue(
     events: list[dict],
     existing_rows: list[dict] | None = None,
@@ -212,10 +219,10 @@ def _build_overrides_queue(
         event_id = str(event.get("closure_event_id", "")).strip()
         if not event_id:
             continue
-        if event.get("review_required") != "true" and event_id not in existing_by_event:
+        if event.get("review_required") != "true" and not _has_editorial_decision(existing_by_event.get(event_id)):
             # Resolved by the pipeline itself (reinstatement, automatic tier or
-            # exclusion): there is no editorial decision to show. Editor-resolved
-            # rows stay visible because their row exists.
+            # exclusion): no editorial decision to show. Rows an earlier push
+            # wrote without a decision are dropped too.
             continue
 
         old = existing_by_event.get(event_id, {})

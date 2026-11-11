@@ -1017,3 +1017,12 @@ class TestOverridesQueueStagingFixes:
         ]
         rows = self._rows(pgs._build_overrides_queue(ev, existing))
         assert [r["opeid8"] for r in rows if not r["closure_event_id"]] == ["05555500"]
+
+
+class TestOverridesQueueSelfHealing:
+    def test_decisionless_row_from_earlier_push_is_dropped(self):
+        ev = [{"closure_event_id": "fsa:03089400:2005-09-26", "opeid8": "03089400", "closed_year": "2005",
+               "review_required": "false", "review_status": "resolved"}]
+        stale = [{"closure_event_id": "fsa:03089400:2005-09-26", "review_status": "resolved",
+                  "closure_type": "", "publication_decision": ""}]
+        assert pgs._build_overrides_queue(ev, stale)[1:] == []
