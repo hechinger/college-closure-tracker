@@ -88,7 +88,19 @@ CROSSWALK_FIELDS = [
     "level", "control", "sector",
     "enrollment_headcount_total",
     "size",
+    "highest_degree",
 ]
+
+# IPEDS HDEGOFR1 / highest degree offered codes
+CREDENTIAL_LEVEL_LABELS: dict[str, str] = {
+    "11": "Certificate",
+    "12": "Certificate",
+    "13": "Associate's",
+    "14": "Associate's",
+    "20": "Bachelor's",
+    "30": "Master's",
+    "40": "Doctoral",
+}
 
 # IPEDS institutional size categories — official federal classification
 # Source: IPEDS Data Dictionary, variable INSTSIZE / SIZE
@@ -133,6 +145,7 @@ def load_year_cache(cache_dir: Path) -> list[dict]:
                     "sector":                    (raw.get("sector")                    or "").strip(),
                     "enrollment_headcount_total": (raw.get("enrollment_headcount_total") or "").strip(),
                     "size":                      (raw.get("size")                      or "").strip(),
+                    "highest_degree":            (raw.get("highest_degree")            or "").strip(),
                 })
     return rows
 
@@ -187,6 +200,7 @@ ENRICHED_FIELDS = [
     # Human-readable sector label (SHEEO / Burchart "traditional college" distinction)
     "institution_category",
     "is_traditional_college",
+    "credential_level",
     "enrollment_headcount_total",
     # IPEDS official size category (INSTSIZE): 1=Under 1,000; 2=1,000-4,999; 3=5,000-9,999; 4=10,000-19,999; 5=20,000+
     "ipeds_size_code",
@@ -224,6 +238,7 @@ def _empty_ipeds() -> dict:
         "unitid": "", "ipeds_institution_name": "", "ipeds_state": "",
         "iclevel": "", "iclevel_label": "", "control": "", "control_label": "",
         "sector": "", "institution_category": "", "is_traditional_college": "",
+        "credential_level": "",
         "enrollment_headcount_total": "", "ipeds_size_code": "", "enrollment_band": "",
         "ipeds_year": "",
     }
@@ -246,6 +261,7 @@ def _ipeds_from_row(row: dict) -> dict:
         "sector":                    sector,
         "institution_category":      SECTOR_LABELS.get(sector, ""),
         "is_traditional_college":    "true" if sector in TRADITIONAL_SECTORS else "false",
+        "credential_level":          CREDENTIAL_LEVEL_LABELS.get(row.get("highest_degree", "").strip(), ""),
         "enrollment_headcount_total": enroll,
         "ipeds_size_code":           size_code,
         "enrollment_band":           _enrollment_band(size_code),

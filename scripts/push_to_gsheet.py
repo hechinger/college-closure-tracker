@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Push closure events to the Hechinger review Google Sheet.
 
+
 Usage
 -----
   # Weekly refresh — writes to closure_list tab, counts new closures:
@@ -64,6 +65,9 @@ _PUBLIC_COLS = [
     "city",
     "state",
     "control_label",
+    "iclevel_label",
+    "institution_category",
+    "credential_level",
     "enrollment_band",
     "enrollment_headcount_total",
     "closed_date_iso",
@@ -136,6 +140,95 @@ def _open_or_create_tab(sh: gspread.Spreadsheet, tab: str, ncols: int) -> gsprea
 
 
 # ---------------------------------------------------------------------------
+# Aggregated chart tabs
+# ---------------------------------------------------------------------------
+
+_MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+def _agg_counts() -> dict:
+    return {"total": 0, "for_profit": 0, "nonprofit": 0, "public": 0,
+            "certificate": 0, "associate": 0, "bachelor": 0, "graduate": 0}
+
+
+def _bump(d: dict, ctrl: str, cred: str) -> None:
+    d["total"] += 1
+    if ctrl == "for-profit":   d["for_profit"] += 1
+    elif ctrl == "nonprofit":  d["nonprofit"] += 1
+    elif ctrl == "public":     d["public"] += 1
+    if cred == "Certificate":  d["certificate"] += 1
+    elif cred == "Associate's": d["associate"] += 1
+    elif cred == "Bachelor's":  d["bachelor"] += 1
+    elif cred in ("Master's", "Doctoral"): d["graduate"] += 1
+
+
+def _approach2_rows(path: Path, min_year: int = 2000) -> list[dict]:
+    """Load events CSV filtered to approach2 (institutional closures) from min_year on."""
+    with path.open(encoding="utf-8", newline="") as fh:
+        raw = list(csv.DictReader(fh))
+    return [r for r in raw
+            if r.get("approach2_main_campus_only") == "true"
+            and r.get("closed_year", "0") >= str(min_year)]
+
+
+def _build_by_year_data(path: Path) -> list[list]:
+    """Annual + monthly closure counts by control type and credential level."""
+    from collections import defaultdict
+    rows = _approach2_rows(path)
+    annual:  dict = defaultdict(_agg_counts)
+    monthly: dict = defaultdict(_agg_counts)
+    for r in rows:
+        year = r.get("closed_year", "")
+        if not year:
+            continue
+        ctrl = r.get("control_label", "")
+        cred = r.get("credential_level", "")
+        date_iso = r.get("closed_date_iso", "")
+        mn = int(date_iso[5:7]) if len(date_iso) >= 7 and date_iso[5:7].isdigit() else 0
+        _bump(annual[year], ctrl, cred)
+        if mn:
+            _bump(monthly[(year, mn)], ctrl, cred)
+    header = ["year","month_num","month","total","for_profit","nonprofit","public",
+              "certificate","associate","bachelor","graduate"]
+    out = [header]
+    for yr in sorted(annual):
+        d = annual[yr]
+        out.append([yr, 0, "", d["total"], d["for_profit"], d["nonprofit"], d["public"],
+                    d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
+    for (yr, mn) in sorted(monthly):
+        d = monthly[(yr, mn)]
+        out.append([yr, mn, _MONTH_NAMES[mn-1], d["total"], d["for_profit"], d["nonprofit"],
+                    d["public"], d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
+    return out
+
+
+def _build_by_state_data(path: Path) -> list[list]:
+    """Closure counts by US state/territory, 2000-present, approach2."""
+    from collections import defaultdict
+    rows = _approach2_rows(path)
+    by_state: dict = defaultdict(lambda: {"total":0,"for_profit":0,"nonprofit":0,"public":0})
+    for r in rows:
+        state = r.get("state", "").strip()
+        if not state or len(state) != 2:
+            continue
+        ctrl = r.get("control_label", "")
+        d = by_state[state]
+        d["total"] += 1
+        if ctrl == "for-profit":  d["for_profit"] += 1
+        elif ctrl == "nonprofit": d["nonprofit"] += 1
+        elif ctrl == "public":    d["public"] += 1
+    header = ["state","total","for_profit","nonprofit","public"]
+    return [header] + [[s, d["total"], d["for_profit"], d["nonprofit"], d["public"]]
+                        for s, d in sorted(by_state.items())]
+
+
+def _write_tab(sh: gspread.Spreadsheet, tab: str, data: list[list]) -> None:
+    ws = _open_or_create_tab(sh, tab, len(data[0]) if data else 1)
+    ws.clear()
+    ws.update("A1", data)
+    print(f"  '{tab}' tab written ({len(data)-1} rows)")
+
+
+# ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
 
@@ -165,6 +258,11 @@ def push(sheet_id: str, tab: str) -> int:
     ws.clear()
     ws.update("A1", data)
     print(f"  Written {nrows:,} rows to '{tab}' tab.")
+
+    if tab == "published":
+        print("Writing aggregated chart tabs…")
+        _write_tab(sh, "by_year",  _build_by_year_data(events_path))
+        _write_tab(sh, "by_state", _build_by_state_data(events_path))
 
     return new_count
 
