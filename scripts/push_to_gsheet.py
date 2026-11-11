@@ -212,10 +212,10 @@ def _build_overrides_queue(
         event_id = str(event.get("closure_event_id", "")).strip()
         if not event_id:
             continue
-        if event.get("review_required") != "true" and event.get("review_status") == "resolved":
-            # Keep resolved rows visible even though they no longer need review.
-            pass
-        elif event.get("review_required") != "true":
+        if event.get("review_required") != "true" and event_id not in existing_by_event:
+            # Resolved by the pipeline itself (reinstatement, automatic tier or
+            # exclusion): there is no editorial decision to show. Editor-resolved
+            # rows stay visible because their row exists.
             continue
 
         old = existing_by_event.get(event_id, {})
@@ -260,7 +260,12 @@ def _build_overrides_queue(
         reason = row.get("review_reason", "")
         row["review_reason"] = "|".join(x for x in [reason, "source_event_missing"] if x)
         merged.append(row)
+    # Old opeid8-keyed rows are dropped once an event-keyed row for the same
+    # OPEID8 exists: that row is their migration and supersedes them.
+    migrated = {str(r.get("opeid8", "")).strip().zfill(8) for r in merged if r.get("opeid8")}
     for old in legacy_rows:
+        if str(old.get("opeid8", "")).strip().zfill(8) in migrated:
+            continue
         merged.append({field: str(old.get(field, "")) for field in OVERRIDES_FIELDS})
 
     status_order = {"needs_re_review": 0, "pending": 1, "needs_more_evidence": 2, "resolved": 3}

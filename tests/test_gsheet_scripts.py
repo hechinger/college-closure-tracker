@@ -978,3 +978,42 @@ class TestMergeLocalOverrides:
     def test_missing_local_file_is_noop(self, tmp_path):
         rows = [{"closure_event_id": "x"}]
         assert pgs._merge_local_overrides(rows, tmp_path / "none.csv") == rows
+
+
+class TestOverridesQueueStagingFixes:
+    """Regressions from the 2026-11-11 staging run."""
+
+    def _event(self, eid, opeid8, **kw):
+        e = {"closure_event_id": eid, "opeid8": opeid8, "closed_year": "2018",
+             "review_required": "true", "review_status": "pending"}
+        e.update(kw)
+        return e
+
+    def _rows(self, queue):
+        header = queue[0]
+        return [dict(zip(header, r)) for r in queue[1:]]
+
+    def test_pipeline_resolved_event_without_editorial_row_is_omitted(self):
+        ev = [self._event("fsa:00100200:2018-06-01", "00100200",
+                          review_required="false", review_status="resolved")]  # reinstated
+        assert self._rows(pgs._build_overrides_queue(ev, [])) == []
+
+    def test_editor_resolved_event_stays(self):
+        ev = [self._event("fsa:00100200:2018-06-01", "00100200",
+                          review_required="false", review_status="resolved")]
+        old = [{"closure_event_id": "fsa:00100200:2018-06-01", "review_status": "resolved",
+                "closure_type": "merger_absorption", "publication_decision": "exclude"}]
+        rows = self._rows(pgs._build_overrides_queue(ev, old))
+        assert rows[0]["closure_type"] == "merger_absorption"
+
+    def test_legacy_row_superseded_by_event_keyed_row_is_dropped(self):
+        ev = [self._event("fsa:00219300:2018-05-09", "00219300", review_required="false",
+                          review_status="resolved")]
+        existing = [
+            {"closure_event_id": "fsa:00219300:2018-05-09", "opeid8": "00219300",
+             "review_status": "resolved", "closure_type": "institutional_closure"},
+            {"closure_event_id": "", "opeid8": "219300", "closure_type": "merger_absorption"},
+            {"closure_event_id": "", "opeid8": "05555500", "closure_type": "branch_closure"},
+        ]
+        rows = self._rows(pgs._build_overrides_queue(ev, existing))
+        assert [r["opeid8"] for r in rows if not r["closure_event_id"]] == ["05555500"]
