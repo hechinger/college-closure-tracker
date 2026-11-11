@@ -134,7 +134,11 @@ once, through the institution closure.
 
 **Human review.** Possible mergers, closures without a usable IPEDS match, and
 schools that kept reporting after their main campus closed go to editors on the
-`overrides` tab (about 240 rows). Every closure first seen after the base table
+`overrides` tab (about 240 rows). Each row explains why it was flagged, what to
+check and a suggested decision. It also carries the evidence: sector, level,
+enrollment, College Navigator and news-search links, what federal records show
+about other locations, and who holds the student records. Suggestions are never
+applied; an editor's decision is. Every closure first seen after the base table
 was frozen also goes to an editor, with a suggested decision where one
 applies.
 

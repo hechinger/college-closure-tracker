@@ -104,7 +104,143 @@ _OVERRIDE_PIPELINE_FIELDS = frozenset({
     "fsa_closed_date_iso", "review_reason", "candidate_closure_scope",
     "replacement_opeid8", "replacement_effective_date_iso",
     "evidence_fingerprint",
+    # Editor-facing context (see _review_context)
+    "city", "why_flagged", "what_to_check", "suggested_decision", "suggested_closure_type",
+    "control", "program_level", "highest_degree", "enrollment", "ipeds_name",
+    "college_navigator_url", "ipeds_last_active_year", "other_locations_evidence",
+    "main_campus_closed_date", "records_held_by", "news_search_url",
 })
+
+# Plain-English versions of review_reason codes, most decisive first.
+_REASON_TEXT = {
+    "source_evidence_changed": "Federal data changed after an editor decided; re-check the decision.",
+    "ipeds_status_combined_with_other_institution":
+        "IPEDS says this school was combined with another institution (possible merger).",
+    "ipeds_reporting_continued_after_closure":
+        "FSA closed the main campus, but the school kept reporting to IPEDS afterward.",
+    "ipeds_parent_inactive_after_closure":
+        "This location closed and its college stopped reporting to IPEDS, but no main-campus closure is on file nearby.",
+    "institution_identity_unresolved": "No usable IPEDS match for this main campus.",
+    "ambiguous_ipeds_match": "IPEDS match is ambiguous (more than one IPEDS record shares this ID).",
+    "parent_continuation_unknown": "Federal records don't show whether the college continued.",
+    "location_name_requires_review": "Location name suggests a non-college site (for example, a high school).",
+    "exact_identifier_replacement_needs_operational_review":
+        "FSA moved this location to a new ID; check whether it kept operating.",
+    "new_since_baseline": "New closure since the base table; meets the automatic standard and needs an editor's confirmation.",
+}
+
+_WHAT_TO_CHECK = {
+    "source_evidence_changed": "Compare the new evidence with the earlier decision; confirm or change it, then set review_status=resolved.",
+    "ipeds_status_combined_with_other_institution":
+        "Look for a merger announcement. If it merged: exclude, closure_type=merger_absorption, add the source URL. "
+        "If it closed outright: include_institution.",
+    "ipeds_reporting_continued_after_closure":
+        "Check whether it moved, renamed or kept teaching elsewhere. If it truly closed: include_institution; if not: exclude.",
+    "ipeds_parent_inactive_after_closure":
+        "Check whether the whole college closed. If so: exclude, closure_type=location_closed_with_institution. "
+        "If the college continued: include_campus.",
+    "institution_identity_unresolved":
+        "Confirm it was a college (not a training program, office or school-district program) and that it closed. "
+        "If so: include_institution.",
+    "ambiguous_ipeds_match": "Pick the right school using the name and city; then decide as for any closure.",
+    "parent_continuation_unknown": "Check whether the college continued after this location closed (include_campus) or closed too (exclude).",
+    "location_name_requires_review": "If it was a high school, office or other non-college site: exclude.",
+    "exact_identifier_replacement_needs_operational_review":
+        "If the location kept operating under the new ID: exclude, closure_type=identifier_replacement.",
+    "new_since_baseline": "Confirm the closure with a news story or state notice, then apply the suggested decision.",
+}
+
+_SCOPE_DECISION = {"institution": ("include_institution", "institutional_closure"),
+                   "campus": ("include_campus", "branch_closure")}
+
+_CHECK_DECISIONS = {
+    "ipeds_status_combined_with_other_institution": ("check: possible merger", "merger_absorption"),
+    "ipeds_parent_inactive_after_closure": ("check: likely exclude", "location_closed_with_institution"),
+    "exact_identifier_replacement_needs_operational_review": ("check: likely exclude", "identifier_replacement"),
+}
+
+
+def _too_recent_for_ipeds(event: dict) -> bool:
+    """Main-campus candidate whose closure year IPEDS cannot test yet."""
+    year, max_year = event.get("closed_year", ""), event.get("ipeds_cache_max_year", "")
+    return (event.get("candidate_closure_scope") == "institution"
+            and event.get("closure_type") in {"institutional_closure", "for_profit_closure"}
+            and year.isdigit() and max_year.isdigit() and int(year) >= int(max_year))
+
+
+_LOCATION_EVIDENCE_PHRASES = [
+    ("RT01 sibling location active on event date:", "FSA lists another location open on the close date:"),
+    ("RT01 contains no other location active on event date", "FSA lists no other location open on the close date"),
+    ("No active RT01 sibling found; absence is not proof of parent cessation",
+     "FSA lists no other open location (not proof the college stopped)"),
+    ("No open RT01 sibling on file", "FSA lists no other open location"),
+    ("RT01 sibling row is stale", "FSA's 'open' location record is out of date"),
+    ("No dated RT01 sibling evidence available", "No FSA location records to check"),
+    ("RT01", "FSA location records"),
+]
+
+
+def _plain_location_evidence(text: str) -> str:
+    for old, new in _LOCATION_EVIDENCE_PHRASES:
+        text = text.replace(old, new)
+    return text
+
+
+def _review_context(event: dict, main_close_dates: dict[str, list[str]]) -> dict[str, str]:
+    """Editor-facing context for one overrides row, built from the event's evidence."""
+    from urllib.parse import quote_plus
+
+    codes = [c for c in (event.get("review_reason") or "").split("|") if c]
+    suggestion = next((c for c in codes if c.startswith("suggested_exclude_")), "")
+    primary = next((c for c in _REASON_TEXT if c in codes), "")
+
+    if event.get("review_status") == "resolved":
+        why = "Decided by an editor; see the decision columns."
+        check, decision, ctype = "", "", ""
+    elif suggestion:
+        excl = suggestion.removeprefix("suggested_exclude_")
+        why = f"New since the base table; the rule would exclude it as {excl.replace('_', ' ')}."
+        check = "Confirm, then set publication_decision=exclude with the suggested closure_type."
+        decision, ctype = "exclude", excl
+    else:
+        why = _REASON_TEXT.get(primary, "Flagged for review.")
+        check = _WHAT_TO_CHECK.get(primary, "Check news coverage and state records.")
+        if primary == "new_since_baseline":
+            decision, ctype = _SCOPE_DECISION.get(event.get("candidate_closure_scope", ""), ("check", ""))
+            if event.get("closure_type") in {"for_profit_closure", "institutional_closure"}:
+                ctype = event["closure_type"]
+        elif not primary and _too_recent_for_ipeds(event):
+            why = ("Closed too recently for IPEDS to confirm the school stopped, and FSA still lists "
+                   "another location open.")
+            check = ("Confirm the whole school closed (news story, state notice, accreditor). If so: "
+                     "include_institution. If it continues at another location: exclude.")
+            decision, ctype = "check: likely include", event.get("closure_type", "")
+        else:
+            decision, ctype = _CHECK_DECISIONS.get(primary, ("check", ""))
+
+    unitid = (event.get("unitid") or "").strip()
+    opeid6 = event.get("opeid6", "")
+    main_dates = [] if event.get("location_suffix") == "00" else sorted(main_close_dates.get(opeid6, []))
+    query = " ".join(x for x in [f'"{event.get("school_name", "")}"', event.get("city", ""), event.get("state", ""), "closing"] if x)
+    other = _plain_location_evidence(event.get("parent_continued_basis") or "")
+    return {
+        "city": event.get("city", ""),
+        "why_flagged": why,
+        "what_to_check": check,
+        "suggested_decision": decision,
+        "suggested_closure_type": ctype,
+        "control": event.get("control_label", ""),
+        "program_level": event.get("program_level", ""),
+        "highest_degree": event.get("credential_level", ""),
+        "enrollment": event.get("enrollment_headcount_total", ""),
+        "ipeds_name": event.get("ipeds_institution_name", ""),
+        "college_navigator_url": f"https://nces.ed.gov/collegenavigator/?id={unitid}" if unitid.isdigit() else "",
+        "ipeds_last_active_year": event.get("ipeds_opeid6_last_year", ""),
+        "other_locations_evidence": other,
+        "main_campus_closed_date": main_dates[-1] if main_dates else "",
+        "records_held_by": event.get("record_holder_desc", ""),
+        "news_search_url": "https://www.google.com/search?q=" + quote_plus(query),
+    }
 
 # ---------------------------------------------------------------------------
 # Publication filters
@@ -210,6 +346,11 @@ def _build_overrides_queue(
         else:
             legacy_rows.append({k: str(v) for k, v in row.items()})
 
+    main_close_dates: dict[str, list[str]] = {}
+    for event in events:
+        if event.get("location_suffix") == "00" and event.get("closed_date_iso"):
+            main_close_dates.setdefault(event.get("opeid6", ""), []).append(event["closed_date_iso"])
+
     merged: list[dict] = []
     seen: set[str] = set()
     for event in events:
@@ -238,6 +379,7 @@ def _build_overrides_queue(
             "replacement_opeid8": event.get("replacement_opeid8", ""),
             "replacement_effective_date_iso": event.get("replacement_effective_date_iso", ""),
             "evidence_fingerprint": event.get("evidence_fingerprint", ""),
+            **_review_context(event, main_close_dates),
         }
         for field in _OVERRIDE_PIPELINE_FIELDS:
             row[field] = str(pipeline_values.get(field, ""))
@@ -277,12 +419,10 @@ def _build_overrides_queue(
             continue
         merged.append({field: str(old.get(field, "")) for field in OVERRIDES_FIELDS})
 
+    # Within each status, newest closures first: those are the time-sensitive ones.
     status_order = {"needs_re_review": 0, "pending": 1, "needs_more_evidence": 2, "resolved": 3}
-    merged.sort(key=lambda r: (
-        status_order.get(r.get("review_status", "pending"), 9),
-        r.get("fsa_closed_date_iso", ""),
-        r.get("opeid8", ""),
-    ), reverse=False)
+    merged.sort(key=lambda r: (r.get("fsa_closed_date_iso", ""), r.get("opeid8", "")), reverse=True)
+    merged.sort(key=lambda r: status_order.get(r.get("review_status", "pending"), 9))
     return [OVERRIDES_FIELDS] + [[row.get(field, "") for field in OVERRIDES_FIELDS] for row in merged]
 
 
@@ -645,6 +785,13 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["mergers — editor-confirmed mergers and affiliations (excluded from closure counts), with basis and source."],
         [""],
         ["OVERRIDES WORKFLOW"],
+        ["Read each row left to right. Newest closures are at the top."],
+        ["  why_flagged / what_to_check / suggested_decision: the pipeline's reading of the evidence. These are"],
+        ["  suggestions only and are never applied by themselves."],
+        ["  control ... news_search_url: the evidence, with College Navigator and news-search links. These"],
+        ["  columns are refreshed on every run, so don't edit them."],
+        ["  To decide: set review_status=resolved and fill publication_decision, closure_type,"],
+        ["  closure_type_basis, the two yes/no facts and a source URL. Merger decisions need the URL."],
         ["review_status: pending | resolved | needs_more_evidence | needs_re_review"],
         ["  (auto_resolved is pipeline-only and never appears as an editor choice)"],
         ["publication_decision: include_institution | include_campus | exclude"],
