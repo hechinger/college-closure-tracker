@@ -46,10 +46,21 @@ jobs:
           mkdir -p "data/raw/weekly_school_file/${WSF_DATE_ISO}/access"
           mv "$WSF_ZIP" "data/raw/weekly_school_file/${WSF_DATE_ISO}/access/"
 
+      - name: Download IPEDS year-cache from GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/ipeds-cache
+          gh release download ipeds-cache-current \
+            --pattern "ipeds_year_cache.zip" \
+            --dir /tmp/ipeds-cache \
+            --repo ${{ github.repository }}
+          unzip -q /tmp/ipeds-cache/ipeds_year_cache.zip -d /tmp/ipeds-cache
+
       - name: Run pipeline
         run: |
           python scripts/parse_federal_sources.py
-          python scripts/build_ipeds_crosswalk.py
+          python scripts/build_ipeds_crosswalk.py --year-cache-dir /tmp/ipeds-cache
           python scripts/classify_closure_events.py
 
       - name: Run tests
