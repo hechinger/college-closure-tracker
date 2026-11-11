@@ -147,7 +147,7 @@ _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 
 def _agg_counts() -> dict:
     return {"total": 0, "for_profit": 0, "nonprofit": 0, "public": 0,
-            "certificate": 0, "associate": 0, "bachelor": 0, "graduate": 0}
+            "non_degree": 0, "certificate": 0, "associate": 0, "bachelor": 0, "graduate": 0}
 
 
 def _bump(d: dict, ctrl: str, cred: str) -> None:
@@ -155,7 +155,8 @@ def _bump(d: dict, ctrl: str, cred: str) -> None:
     if ctrl == "for-profit":   d["for_profit"] += 1
     elif ctrl == "nonprofit":  d["nonprofit"] += 1
     elif ctrl == "public":     d["public"] += 1
-    if cred == "Certificate":  d["certificate"] += 1
+    if cred == "Non-degree":    d["non_degree"] += 1
+    elif cred == "Certificate": d["certificate"] += 1
     elif cred == "Associate's": d["associate"] += 1
     elif cred == "Bachelor's":  d["bachelor"] += 1
     elif cred in ("Master's", "Doctoral"): d["graduate"] += 1
@@ -188,16 +189,16 @@ def _build_by_year_data(path: Path) -> list[list]:
         if mn:
             _bump(monthly[(year, mn)], ctrl, cred)
     header = ["year","month_num","month","total","for_profit","nonprofit","public",
-              "certificate","associate","bachelor","graduate"]
+              "non_degree","certificate","associate","bachelor","graduate"]
     out = [header]
     for yr in sorted(annual):
         d = annual[yr]
         out.append([yr, 0, "", d["total"], d["for_profit"], d["nonprofit"], d["public"],
-                    d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
+                    d["non_degree"], d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
     for (yr, mn) in sorted(monthly):
         d = monthly[(yr, mn)]
         out.append([yr, mn, _MONTH_NAMES[mn-1], d["total"], d["for_profit"], d["nonprofit"],
-                    d["public"], d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
+                    d["public"], d["non_degree"], d["certificate"], d["associate"], d["bachelor"], d["graduate"]])
     return out
 
 

@@ -93,6 +93,7 @@ CROSSWALK_FIELDS = [
 
 # IPEDS HDEGOFR1 / highest degree offered codes
 CREDENTIAL_LEVEL_LABELS: dict[str, str] = {
+    "0":  "Non-degree",
     "11": "Certificate",
     "12": "Certificate",
     "13": "Associate's",
