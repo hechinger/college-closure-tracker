@@ -87,6 +87,20 @@ class TestLoadRows:
         result = pgs._load_rows(p, cols)
         assert all(row[1] == "" for row in result[1:])
 
+    def test_min_year_filters_older_rows(self, tmp_path):
+        _write_events_csv(tmp_path, _sample_events())
+        p = tmp_path / "fsa_closure_events_2026-01-01.csv"
+        cols = ["opeid8", "closed_year"]
+        result = pgs._load_rows(p, cols, min_year=2019)
+        years = [row[1] for row in result[1:]]
+        assert all(int(y) >= 2019 for y in years if y)
+
+    def test_min_year_none_keeps_all(self, tmp_path):
+        _write_events_csv(tmp_path, _sample_events())
+        p = tmp_path / "fsa_closure_events_2026-01-01.csv"
+        cols = ["opeid8"]
+        assert len(pgs._load_rows(p, cols, min_year=None)) == 3  # header + 2
+
 
 class TestLatestEventsCsv:
     def test_picks_latest_by_name(self, tmp_path):

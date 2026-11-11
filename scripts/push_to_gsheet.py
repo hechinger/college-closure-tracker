@@ -101,10 +101,16 @@ def _latest_events_csv() -> Path:
     return candidates[0]
 
 
-def _load_rows(path: Path, columns: list[str]) -> list[list[str]]:
+def _load_rows(
+    path: Path,
+    columns: list[str],
+    min_year: int | None = None,
+) -> list[list[str]]:
     """Return rows as a list-of-lists (header first), sorted newest-closed first."""
     with path.open(encoding="utf-8", newline="") as fh:
         raw = list(csv.DictReader(fh))
+    if min_year is not None:
+        raw = [r for r in raw if r.get("closed_year", "0") >= str(min_year)]
     raw.sort(key=lambda r: r.get("closed_date_iso", ""), reverse=True)
     result: list[list[str]] = [columns]
     for row in raw:
@@ -141,7 +147,8 @@ def push(sheet_id: str, tab: str) -> int:
     columns = TAB_COLUMNS[tab]
     events_path = _latest_events_csv()
     print(f"Loading {events_path.name} …")
-    data = _load_rows(events_path, columns)
+    min_year = 2000 if tab == "published" else None
+    data = _load_rows(events_path, columns, min_year=min_year)
     nrows = len(data) - 1
     print(f"  {nrows:,} records → '{tab}' tab")
 
