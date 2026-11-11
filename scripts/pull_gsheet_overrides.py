@@ -75,7 +75,7 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
     valid: list[dict[str, str]] = []
     errors = 0
     for i, row in enumerate(rows, 1):
-        opeid8 = str(row.get("opeid8", "")).strip()
+        opeid8 = str(row.get("opeid8", "")).strip().zfill(8)
         ctype  = str(row.get("closure_type", "")).strip()
         if not opeid8:
             print(f"  WARNING: row {i} skipped — empty opeid8", file=sys.stderr)
