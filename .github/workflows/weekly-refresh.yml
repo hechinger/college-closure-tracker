@@ -28,8 +28,11 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: github-actions-sheets@project-d5e32b84-d94f-446f-9b5.iam.gserviceaccount.com
 
-      - name: Download FSA weekly school file
+      - name: Download FSA weekly closed-school search file
         run: python scripts/download_weekly_closed_school_search_file.py
+
+      - name: Download FSA weekly school file (WSF)
+        run: python scripts/download_weekly_school_file.py
 
       - name: Run pipeline
         run: |
