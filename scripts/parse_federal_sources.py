@@ -410,7 +410,7 @@ def _latest_closed_zip() -> tuple[Path, str] | None:
         if not dated_dir.is_dir():
             continue
         for f in dated_dir.iterdir():
-            if f.suffix == ".zip" and "CLOSED_REPORT" in f.name.upper():
+            if f.suffix == ".zip":
                 hits.append((dated_dir.name, f))
     if not hits:
         return None
