@@ -236,6 +236,24 @@ def _enrollment_band(size_code: str) -> str:
     return SIZE_LABELS.get(size_code.strip(), "")
 
 
+def _credential_level(iclevel: str, highest_degree: str) -> str:
+    """Derive credential level using iclevel as primary source.
+
+    iclevel is reliably matched per record; highest_degree can reflect the
+    parent institution's offering and is only used to distinguish within the
+    4-year tier (bachelor's / master's / doctoral).
+    """
+    if iclevel == "2":
+        return "Associate's"
+    if iclevel == "3":
+        return "Non-degree" if highest_degree == "0" else "Certificate"
+    if iclevel == "1":
+        return {"20": "Bachelor's", "30": "Master's", "40": "Doctoral"}.get(
+            highest_degree, "Bachelor's or above"
+        )
+    return ""
+
+
 def _empty_ipeds() -> dict:
     return {
         "unitid": "", "ipeds_institution_name": "", "ipeds_state": "",
@@ -265,7 +283,7 @@ def _ipeds_from_row(row: dict) -> dict:
         "institution_category":      SECTOR_LABELS.get(sector, ""),
         "is_traditional_college":    "true" if sector in TRADITIONAL_SECTORS else "false",
         "program_level":             PROGRAM_LEVEL_LABELS.get(level, ""),
-        "credential_level":          CREDENTIAL_LEVEL_LABELS.get(row.get("highest_degree", "").strip(), ""),
+        "credential_level":          _credential_level(level, row.get("highest_degree", "").strip()),
         "enrollment_headcount_total": enroll,
         "ipeds_size_code":           size_code,
         "enrollment_band":           _enrollment_band(size_code),
