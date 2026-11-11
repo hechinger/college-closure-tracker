@@ -665,6 +665,7 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["  institution stopped (federal records show no other location still open, or it stopped reporting"],
         ["  to IPEDS as active)."],
         ["  Mergers are not closures (see the mergers tab). Every new closure is reviewed by an editor."],
+        ["  Chains that held separate federal approvals for several schools count once per school."],
         ["vs SHEEO (2008-2023: 848 vs our 1,036; associate-or-higher 287 vs our 415): the rules are strict in"],
         ["  different places. SHEEO counts a college"],
         ["  only when EVERY federal location record is closed. FSA often leaves one marked open after a school"],

@@ -29,6 +29,10 @@ slightly as federal data updates. The published table covers 1996 onward.*
   closes **and** federal data point to the institution itself having stopped:
   federal records don't show any other location still open, or the school
   stopped reporting to IPEDS as an active institution.
+- **We count schools the way the federal government does.** Chains that held
+  separate federal approvals for several schools count once per school. Triangle
+  Tech's Pittsburgh, Greensburg and DuBois schools are three closures, for
+  example. Branches under one approval count once, through their main campus.
 - **Mergers and affiliations are not closures.** When a school's operations
   continued under another institution, an editor confirms it and it is listed
   on the `mergers` tab instead.
