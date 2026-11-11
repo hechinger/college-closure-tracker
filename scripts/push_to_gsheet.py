@@ -258,8 +258,10 @@ def _build_overrides_queue(
 
     # Preserve editorial rows whose source event disappeared so the history is
     # not silently erased. Mark resolved records for re-review.
+    current_ids = {str(e.get("closure_event_id", "")).strip() for e in events}
     for event_id, old in existing_by_event.items():
-        if event_id in seen:
+        if event_id in seen or event_id in current_ids or not _has_editorial_decision(old):
+            # Handled above, or nothing editorial worth preserving.
             continue
         row = {field: str(old.get(field, "")) for field in OVERRIDES_FIELDS}
         if row.get("review_status") == "resolved":
