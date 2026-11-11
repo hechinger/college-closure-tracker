@@ -63,6 +63,11 @@ jobs:
           python scripts/build_ipeds_crosswalk.py --year-cache-dir /tmp/ipeds-cache
           python scripts/classify_closure_events.py
 
+      # Informational: SHEEO-method replication and reconciliation (log only).
+      - name: Benchmark against SHEEO method
+        continue-on-error: true
+        run: python scripts/benchmark_sheeo_method.py
+
       - name: Run tests
         run: python -m pytest tests/ -q
 

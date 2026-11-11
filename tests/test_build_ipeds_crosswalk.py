@@ -463,8 +463,18 @@ class TestConstants:
         for code in ("1", "2", "3", "4", "5", "6", "7", "8"):
             assert code in SECTOR_LABELS
 
-    def test_traditional_sectors_are_1_to_4(self):
-        assert TRADITIONAL_SECTORS == frozenset({"1", "2", "3", "4"})
+    def test_traditional_sectors_are_public_and_nonprofit_2yr_4yr(self):
+        # IPEDS SECTOR: 1 public 4yr, 2 nonprofit 4yr, 4 public 2yr, 5 nonprofit 2yr.
+        # Sector 3 is for-profit 4yr and must not be "traditional".
+        assert TRADITIONAL_SECTORS == frozenset({"1", "2", "4", "5"})
+
+    @pytest.mark.parametrize("code,label", [
+        ("1", "public_4yr"), ("2", "private_nonprofit_4yr"), ("3", "for_profit_4yr"),
+        ("4", "public_2yr"), ("5", "private_nonprofit_2yr"), ("6", "for_profit_2yr"),
+        ("7", "public_lt2yr"), ("8", "private_nonprofit_lt2yr"), ("9", "for_profit_lt2yr"),
+    ])
+    def test_sector_labels_follow_ipeds_control_by_level(self, code, label):
+        assert SECTOR_LABELS[code] == label
 
     def test_size_labels_coverage(self):
         for code in ("1", "2", "3", "4", "5"):
@@ -562,18 +572,21 @@ class TestEnrichmentNewFields:
         enriched, _ = enrich_closure_records(closures, *_make_indexes(self._base_cache(sector="2")))
         assert enriched[0]["institution_category"] == "private_nonprofit_4yr"
 
-    def test_is_traditional_college_true_for_sector_1_to_4(self):
-        for sector in ("1", "2", "3", "4"):
+    def test_is_traditional_college_true_for_public_nonprofit_2yr_4yr(self):
+        for sector in ("1", "2", "4", "5"):
             closures = [_fsa_rec("00100200", "2023-01-01")]
             enriched, _ = enrich_closure_records(
                 closures, *_make_indexes(self._base_cache(sector=sector))
             )
             assert enriched[0]["is_traditional_college"] == "true", f"sector {sector}"
 
-    def test_is_traditional_college_false_for_for_profit(self):
-        closures = [_fsa_rec("00100200", "2023-01-01")]
-        enriched, _ = enrich_closure_records(closures, *_make_indexes(self._base_cache(sector="6")))
-        assert enriched[0]["is_traditional_college"] == "false"
+    def test_is_traditional_college_false_for_for_profit_and_lt2yr(self):
+        for sector in ("3", "6", "7", "8", "9"):
+            closures = [_fsa_rec("00100200", "2023-01-01")]
+            enriched, _ = enrich_closure_records(
+                closures, *_make_indexes(self._base_cache(sector=sector))
+            )
+            assert enriched[0]["is_traditional_college"] == "false", f"sector {sector}"
 
     def test_enrollment_band_populated(self):
         closures = [_fsa_rec("00100200", "2023-01-01")]
@@ -750,3 +763,106 @@ class TestIntegration:
         assert len(rows) == 2
         opeids = {r["opeid8"] for r in rows}
         assert opeids == {"00100200", "00200300"}
+
+
+# ---------------------------------------------------------------------------
+# Credential level (HDEGOFR1 coding) and extended history coverage
+# ---------------------------------------------------------------------------
+
+from build_ipeds_crosswalk import _credential_level, load_year_caches
+
+
+class TestCredentialLevel:
+    @pytest.mark.parametrize("code,label", [
+        ("11", "Doctoral"), ("12", "Doctoral"), ("13", "Doctoral"), ("14", "Doctoral"),
+        ("20", "Master's"), ("30", "Bachelor's"), ("40", "Bachelor's or above"),
+        ("-3", "Bachelor's or above"),
+    ])
+    def test_four_year_uses_hdegofr1(self, code, label):
+        assert _credential_level("1", code) == label
+
+    def test_two_year_is_associate(self):
+        assert _credential_level("2", "40") == "Associate's"
+
+    def test_less_than_two_year(self):
+        assert _credential_level("3", "0") == "Non-degree"
+        assert _credential_level("3", "40") == "Certificate"
+
+
+class TestHistoryCoverage:
+    def _cache(self, year):
+        return [{"opeid8": "00100200", "opeid6": "001002", "unitid": "111",
+                 "year": str(year), "institution_name": "X", "city": "C",
+                 "state": "TX", "level": "1", "control": "2", "sector": "2",
+                 "enrollment_headcount_total": "100"}]
+
+    def test_min_year_param_extends_coverage(self):
+        closures = [_fsa_rec("00100200", "2009-05-01")]
+        enriched, _ = enrich_closure_records(closures, *_make_indexes(self._cache(2007)), 2002)
+        assert enriched[0]["match_method"] == "matched_opeid8_yr2007"
+
+    def test_closure_at_or_before_min_year_is_gap(self):
+        closures = [_fsa_rec("00100200", "2002-05-01")]
+        enriched, review = enrich_closure_records(closures, *_make_indexes(self._cache(2002)), 2002)
+        assert enriched[0]["match_method"] == "no_ipeds_coverage"
+        assert review == []
+
+    def test_load_year_caches_reads_history_files_and_dedupes(self, tmp_path):
+        fh, hist = tmp_path / "fh", tmp_path / "hist"
+        fh.mkdir(); hist.mkdir()
+        _write_cache_file(fh, 2014, [_sample_row("00100200", "111", 2014)])
+        (hist / "ipeds_history_year_2010.csv").write_text(
+            _make_cache_csv([_sample_row("00100200", "111", 2010)]), encoding="utf-8")
+        (hist / "ipeds_history_year_2014.csv").write_text(
+            _make_cache_csv([_sample_row("00100200", "111", 2014)]), encoding="utf-8")
+        rows = load_year_caches([fh, hist])
+        assert sorted(r["year"] for r in rows) == ["2010", "2014"]
+
+
+class TestContinuationFields:
+    def test_opeid6_last_year_and_max_year_on_enriched_rows(self):
+        from build_ipeds_crosswalk import build_opeid6_last_year
+        base = {"opeid6": "001002", "institution_name": "X", "city": "C", "state": "TX",
+                "level": "1", "control": "3", "sector": "3", "enrollment_headcount_total": "1"}
+        cache = [
+            {**base, "opeid8": "00100200", "unitid": "111", "year": "2016"},
+            {**base, "opeid8": "00100201", "unitid": "112", "year": "2017"},
+        ]
+        last = build_opeid6_last_year(cache)
+        assert last == {"001002": 2017}
+        enriched, _ = enrich_closure_records(
+            [_fsa_rec("00100200", "2018-01-01")], *_make_indexes(cache), 2002,
+            opeid6_last_year=last, cache_max_year=2025)
+        assert enriched[0]["ipeds_opeid6_last_year"] == "2017"
+        assert enriched[0]["ipeds_cache_max_year"] == "2025"
+
+
+class TestIpedsStatusSignals:
+    _BASE = {"opeid6": "001002", "institution_name": "X", "city": "C", "state": "TX",
+             "level": "1", "control": "3", "sector": "3", "enrollment_headcount_total": "1"}
+
+    def test_closed_rows_do_not_count_as_continued_reporting(self):
+        from build_ipeds_crosswalk import build_opeid6_last_year
+        cache = [
+            {**self._BASE, "opeid8": "00100200", "unitid": "111", "year": "2016", "is_active": "1", "status": "A"},
+            {**self._BASE, "opeid8": "00100201", "unitid": "112", "year": "2017", "is_active": "3", "status": "D"},
+        ]
+        assert build_opeid6_last_year(cache) == {"001002": 2016}
+
+    def test_combined_status_flag(self):
+        from build_ipeds_crosswalk import build_combined_years
+        cache = [
+            {**self._BASE, "opeid8": "00100200", "unitid": "111", "year": "2017", "is_active": "1", "status": "A"},
+            {**self._BASE, "opeid8": "00100200", "unitid": "111", "year": "2018", "is_active": "3", "status": "C"},
+        ]
+        enriched, _ = enrich_closure_records(
+            [_fsa_rec("00100200", "2018-03-01")], *_make_indexes(cache), 2002,
+            combined_years=build_combined_years(cache))
+        assert enriched[0]["ipeds_combined_after_closure"] == "true"
+
+
+def test_history_status_derivation():
+    from build_ipeds_history_cache import _status
+    assert _status("1", "-2", "-2") == "A"
+    assert _status("3", "123456", "-2") == "C"
+    assert _status("3", "-2", "06/2010") == "D"

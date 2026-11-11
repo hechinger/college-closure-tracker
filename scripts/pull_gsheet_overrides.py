@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Pull editorial overrides from the Google Sheet and write closure_type_overrides.csv.
+"""Pull the combined editorial review/overrides queue from Google Sheets.
 
-Reads the 'overrides' tab of the Hechinger review Sheet (columns: opeid8,
-closure_type, closure_type_basis, editor_note) and writes the result to
-data/manual/closure_type_overrides.csv so the classifier picks it up on the
-next run.
+Pending and resolved rows live in the same tab. The complete queue is written
+locally; the classifier applies only review_status=resolved rows.
 
 Usage
 -----
@@ -13,9 +11,9 @@ Usage
 
 Validation
 ----------
-  Rows with an empty opeid8 or an unrecognised closure_type are skipped with a
-  warning. The script exits 1 if any rows fail validation, so CI catches a
-  misconfigured sheet before the classifier runs.
+  Resolved rows require a decision, valid closure type, documented basis, and
+  internally consistent operational facts. Pending rows do not require an
+  editorial decision. The script exits 1 if any row fails validation.
 
 Credentials
 -----------
@@ -37,27 +35,43 @@ import gspread
 from google.auth.transport.requests import Request as _AuthRequest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from classify_closure_events import EVENT_TYPES
+from classify_closure_events import (
+    EVENT_TYPES,
+    PUBLICATION_DECISIONS,
+    REVIEW_STATUSES,
+)
 
 PROJECT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = PROJECT / "data" / "manual" / "closure_type_overrides.csv"
 
-# Columns the pipeline reads and writes.  school_name / state / closed_date_iso
-# are context-only fields visible to editors in the Sheet but ignored by the
-# classifier.  opeid8 / closure_type / closure_type_basis are required; the
-# rest are optional and not validated.
+# One combined review and decision record per closure_event_id. Context and
+# candidate fields are pipeline-owned; decision/evidence fields are editorial.
 OVERRIDES_FIELDS = [
+    "closure_event_id",
     "opeid8",
-    "school_name",        # context for editors; not used by pipeline
-    "state",              # context for editors; not used by pipeline
-    "closed_date_iso",    # context for editors; not used by pipeline
+    "school_name",
+    "state",
+    "fsa_closed_date_iso",
+    "review_reason",
+    "candidate_closure_scope",
+    "review_status",
+    "publication_decision",
     "closure_type",
     "closure_type_basis",
+    "location_operations_ceased",
+    "operations_ceased_basis",
+    "parent_continued",
+    "parent_continued_basis",
+    "verified_closed_date_iso",
+    "date_basis",
+    "date_evidence_url",
+    "replacement_opeid8",
+    "replacement_effective_date_iso",
+    "evidence_fingerprint",
     "editor_note",
+    "reviewed_by",
+    "reviewed_on",
 ]
-
-# Fields the classifier actually uses (subset of OVERRIDES_FIELDS).
-_REQUIRED_OVERRIDE_FIELDS = frozenset({"opeid8", "closure_type", "closure_type_basis"})
 
 _SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -72,6 +86,13 @@ def _get_gspread_client() -> gspread.Client:
     return gspread.Client(auth=creds)
 
 VALID_EVENT_TYPES = frozenset(EVENT_TYPES)
+VALID_REVIEW_STATUSES = frozenset(REVIEW_STATUSES)
+VALID_PUBLICATION_DECISIONS = frozenset(PUBLICATION_DECISIONS)
+_TRI_STATE = frozenset({"true", "false", "unknown"})
+_EVIDENCE_REQUIRED_TYPES = frozenset({
+    "merger_absorption", "system_consolidation", "identifier_replacement",
+    "affiliation_or_governance_change",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -93,31 +114,95 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
     for i, row in enumerate(rows, 1):
         raw_id = str(row.get("opeid8", "")).strip()
         opeid8 = raw_id.zfill(8) if raw_id else ""
-        ctype  = str(row.get("closure_type", "")).strip()
-        if not opeid8:
-            print(f"  WARNING: row {i} skipped — empty opeid8", file=sys.stderr)
+        event_id = str(row.get("closure_event_id", "")).strip()
+        ctype = str(row.get("closure_type", "")).strip()
+        basis = str(row.get("closure_type_basis", "")).strip()
+        status = str(row.get("review_status", "")).strip()
+        decision = str(row.get("publication_decision", "")).strip()
+        location_ceased = str(row.get("location_operations_ceased", "")).strip()
+        parent_continued = str(row.get("parent_continued", "")).strip()
+
+        # Migration for the original decisions-only tab.
+        if not status:
+            status = "resolved" if ctype else "pending"
+        if not decision and status == "resolved" and ctype:
+            if ctype in {"institutional_closure", "for_profit_closure", "system_consolidation"}:
+                decision = "include_institution"
+            elif ctype == "branch_closure":
+                decision = "include_campus"
+            else:
+                decision = "exclude"
+
+        if not (event_id or opeid8):
+            print(f"  WARNING: row {i} skipped — empty closure_event_id and opeid8", file=sys.stderr)
             errors += 1
             continue
-        if not ctype:
-            print(f"  WARNING: row {i} ({opeid8}) skipped — empty closure_type", file=sys.stderr)
+        if status not in VALID_REVIEW_STATUSES:
+            print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — unknown review_status {status!r}",
+                  file=sys.stderr)
             errors += 1
             continue
-        if ctype not in VALID_EVENT_TYPES:
-            print(
-                f"  WARNING: row {i} ({opeid8}) skipped — unknown closure_type {ctype!r};"
-                f" valid: {sorted(VALID_EVENT_TYPES)}",
-                file=sys.stderr,
-            )
-            errors += 1
-            continue
+
+        if status == "resolved":
+            if not ctype or ctype not in VALID_EVENT_TYPES:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — invalid resolved closure_type {ctype!r}",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if not basis:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — resolved row needs closure_type_basis",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if decision not in VALID_PUBLICATION_DECISIONS:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — invalid publication_decision {decision!r}",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if location_ceased and location_ceased not in _TRI_STATE:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — invalid location_operations_ceased",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if parent_continued and parent_continued not in _TRI_STATE:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — invalid parent_continued",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if decision == "include_institution" and not (
+                location_ceased == "true" and parent_continued == "false"
+            ):
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — institution inclusion requires location_operations_ceased=true and parent_continued=false",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            if decision == "include_campus" and not (
+                location_ceased == "true" and parent_continued == "true"
+            ):
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — campus inclusion requires location_operations_ceased=true and parent_continued=true",
+                      file=sys.stderr)
+                errors += 1
+                continue
+            evidence_url = str(row.get("date_evidence_url", "")).strip()
+            if ctype in _EVIDENCE_REQUIRED_TYPES and not evidence_url:
+                print(f"  WARNING: row {i} ({event_id or opeid8}) skipped — {ctype} needs date_evidence_url",
+                      file=sys.stderr)
+                errors += 1
+                continue
+
         valid.append({
-            "opeid8":               opeid8,
-            "school_name":          str(row.get("school_name", "")).strip(),
-            "state":                str(row.get("state", "")).strip(),
-            "closed_date_iso":      str(row.get("closed_date_iso", "")).strip(),
-            "closure_type":         ctype,
-            "closure_type_basis":   str(row.get("closure_type_basis", "")).strip(),
-            "editor_note":          str(row.get("editor_note", "")).strip(),
+            field: (
+                event_id if field == "closure_event_id" else
+                opeid8 if field == "opeid8" else
+                status if field == "review_status" else
+                decision if field == "publication_decision" else
+                ctype if field == "closure_type" else
+                basis if field == "closure_type_basis" else
+                str(row.get("closed_date_iso", "")).strip()
+                    if field == "fsa_closed_date_iso" and not row.get(field) else
+                str(row.get(field, "")).strip()
+            )
+            for field in OVERRIDES_FIELDS
         })
     return valid, errors
 

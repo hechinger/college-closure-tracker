@@ -20,9 +20,11 @@ Review queue entries:
   review_opeid6_ambiguous    : OPEID6 found but >1 UNITID
   no_match                   : in-window, no hit
 
-Coverage note: year cache is 2014-2025 only.  Closures in 2014 or earlier
-receive match_method "no_ipeds_coverage" and are NOT added to the review
-queue; they are an expected gap.
+Coverage note: the Financial Health year cache covers 2014-2025; the history
+cache built by build_ipeds_history_cache.py adds 2002-2013 (HD files for
+2000-2001 are not available locally).  Closures in or before the earliest
+loaded year receive match_method "no_ipeds_coverage" and are NOT added to the
+review queue; they are an expected gap.
 
 Usage (from project root):
   python scripts/build_ipeds_crosswalk.py
@@ -44,33 +46,37 @@ YEAR_CACHE_DIR = (
     / "Financial Health Tracker - For Github"
     / "ipeds" / "cache" / "year_cache"
 )
+# Pre-2014 years rebuilt from NCES HD/EFFY archives (build_ipeds_history_cache.py).
+HISTORY_CACHE_DIR = PROJECT / "data" / "inputs" / "ipeds" / "history_year_cache"
 DERIVED = PROJECT / "data" / "derived"
 
 MISSING_CODES: frozenset[str] = frozenset({"-2", "-3", ""})
-MIN_YEAR  = 2014   # earliest year in our cache
+MIN_YEAR  = 2014   # default floor; main() uses the earliest year actually loaded
 MAX_LOOKBACK = 5   # years before closure to search
 
 LEVEL_LABELS         = {"1": "4yr+", "2": "2-4yr", "3": "<2yr"}
 PROGRAM_LEVEL_LABELS = {"1": "4-year or above", "2": "2-year", "3": "Less than 2-year"}
 CONTROL_LABELS = {"1": "public", "2": "nonprofit", "3": "for-profit"}
 
-# IPEDS sector codes → human-readable category (Burchart / SHEEO distinction)
+# IPEDS SECTOR codes (control x level) → human-readable category.
+# Verified against the year cache: SECTOR always equals the CONTROL/ICLEVEL
+# combination below (e.g. sector 3 = control 3, level 1).
 SECTOR_LABELS = {
     "1": "public_4yr",
     "2": "private_nonprofit_4yr",
-    "3": "private_nonprofit_2yr",
+    "3": "for_profit_4yr",
     "4": "public_2yr",
-    "5": "public_lt2yr",
-    "6": "for_profit_4yr",
-    "7": "for_profit_2yr",
-    "8": "for_profit_lt2yr",
-    "9": "unclassified",
-    "0": "unclassified",
+    "5": "private_nonprofit_2yr",
+    "6": "for_profit_2yr",
+    "7": "public_lt2yr",
+    "8": "private_nonprofit_lt2yr",
+    "9": "for_profit_lt2yr",
+    "0": "administrative_unit",
+    "99": "unclassified",
 }
 
 # Traditional college = public or nonprofit, 4-year or 2-year (not vocational/lt2yr).
-# Sector codes 1-4 per SHEEO / Burchart "traditional college" definition.
-TRADITIONAL_SECTORS = frozenset({"1", "2", "3", "4"})
+TRADITIONAL_SECTORS = frozenset({"1", "2", "4", "5"})
 
 _REVIEW_METHODS = frozenset({
     "review_opeid8_multi_unitid",
@@ -119,10 +125,26 @@ def _is_valid_opeid8(opeid: str) -> bool:
     return bool(opeid) and opeid not in MISSING_CODES and len(opeid) == 8 and opeid.isdigit()
 
 
+def load_year_caches(cache_dirs: list[Path]) -> list[dict]:
+    """Load year caches from several directories; first directory wins on overlap."""
+    rows: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for cache_dir in cache_dirs:
+        for row in load_year_cache(cache_dir):
+            key = (row["opeid8"], row["unitid"], row["year"])
+            if key not in seen:
+                seen.add(key)
+                rows.append(row)
+    return rows
+
+
 def load_year_cache(cache_dir: Path) -> list[dict]:
     """Load all year-cache CSVs; return rows with valid OPEID8 and UNITID."""
     rows: list[dict] = []
-    for f in sorted(cache_dir.glob("ipeds_financial_health_year_*.csv")):
+    files = sorted(cache_dir.glob("ipeds_financial_health_year_*.csv")) + sorted(
+        cache_dir.glob("ipeds_history_year_*.csv")
+    )
+    for f in files:
         with f.open(encoding="utf-8-sig", newline="") as fh:
             for raw in csv.DictReader(fh):
                 opeid  = (raw.get("opeid")  or "").strip()
@@ -148,6 +170,10 @@ def load_year_cache(cache_dir: Path) -> list[dict]:
                     "enrollment_headcount_total": (raw.get("enrollment_headcount_total") or "").strip(),
                     "size":                      (raw.get("size")                      or "").strip(),
                     "highest_degree":            (raw.get("highest_degree")            or "").strip(),
+                    # HD STATUS (A/N/R/M active; C combined; D closed; G child)
+                    # and CYACTIVE-style flag (1 = active in the year).
+                    "status":                    (raw.get("status")                    or "").strip(),
+                    "is_active":                 (raw.get("is_active")                 or "").strip(),
                 })
     return rows
 
@@ -168,6 +194,32 @@ def build_opeid8_index(rows: list[dict]) -> dict[tuple[str, str], dict]:
         if len(unitids) > 1:
             index[key]["_multi_unitid"] = True
     return index
+
+
+def build_opeid6_last_year(rows: list[dict]) -> dict[str, int]:
+    """Return {opeid6: latest IPEDS year with an ACTIVE row under that OPEID6}.
+
+    IPEDS keeps a closed institution in the directory for a year afterwards
+    with is_active=3 and STATUS D/C (e.g. ITT in HD2017), so only active rows
+    count as continued operation.  Rows without the flag count as active.
+    """
+    last: dict[str, int] = {}
+    for row in rows:
+        if row.get("is_active", "") not in {"", "1"}:
+            continue
+        year = int(row["year"])
+        if year > last.get(row["opeid6"], 0):
+            last[row["opeid6"]] = year
+    return last
+
+
+def build_combined_years(rows: list[dict]) -> dict[str, set[int]]:
+    """Return {unitid: years where IPEDS STATUS = C (combined with another institution)}."""
+    out: dict[str, set[int]] = defaultdict(set)
+    for row in rows:
+        if row.get("status") == "C":
+            out[row["unitid"]].add(int(row["year"]))
+    return dict(out)
 
 
 def build_opeid6_rows_index(rows: list[dict]) -> dict[tuple[str, str], list[dict]]:
@@ -210,6 +262,14 @@ ENRICHED_FIELDS = [
     "enrollment_band",
     "ipeds_year",
     "match_method",
+    # Continuation evidence: last IPEDS year in which ANY institution under
+    # this OPEID6 reported, and the latest year in the cache.  A closure whose
+    # OPEID6 never reports after the closure year did not continue operating.
+    "ipeds_opeid6_last_year",
+    "ipeds_cache_max_year",
+    # true when the matched UNITID has IPEDS STATUS = C (combined with another
+    # institution) in the closure year or later — a structured merger signal.
+    "ipeds_combined_after_closure",
     # SHEEO three counting approaches (Measuring College Closures with Federal Education Data, 2024)
     "approach1_all_campuses",        # always true  — each OPEID8 = one closure
     "approach2_main_campus_only",    # true if is_main_campus — full institution closures only
@@ -242,13 +302,18 @@ def _credential_level(iclevel: str, highest_degree: str) -> str:
     iclevel is reliably matched per record; highest_degree can reflect the
     parent institution's offering and is only used to distinguish within the
     4-year tier (bachelor's / master's / doctoral).
+
+    highest_degree is IPEDS HDEGOFR1: 11-14 doctoral, 20 master's,
+    30 bachelor's, 40 associate's, 0 non-degree.
     """
     if iclevel == "2":
         return "Associate's"
     if iclevel == "3":
         return "Non-degree" if highest_degree == "0" else "Certificate"
     if iclevel == "1":
-        return {"20": "Bachelor's", "30": "Master's", "40": "Doctoral"}.get(
+        if highest_degree in {"11", "12", "13", "14"}:
+            return "Doctoral"
+        return {"20": "Master's", "30": "Bachelor's"}.get(
             highest_degree, "Bachelor's or above"
         )
     return ""
@@ -295,9 +360,14 @@ def enrich_closure_records(
     closure_records: list[dict],
     opeid8_idx: dict[tuple[str, str], dict],
     opeid6_rows_idx: dict[tuple[str, str], list[dict]],
+    min_year: int = MIN_YEAR,
+    opeid6_last_year: dict[str, int] | None = None,
+    cache_max_year: int | None = None,
+    combined_years: dict[str, set[int]] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     For each FSA closure record, find the best IPEDS match.
+    min_year is the earliest IPEDS year loaded.
     Returns (enriched_rows, review_rows).
     """
     enriched: list[dict] = []
@@ -337,13 +407,13 @@ def enrich_closure_records(
 
         if closed_yr is None:
             method = "no_closure_date"
-        elif closed_yr <= MIN_YEAR:
-            # Closure in 2014 or earlier: the year-before would be 2013,
-            # which is not in our cache.  Expected gap, not a data quality flag.
+        elif closed_yr <= min_year:
+            # The year before closure is not in the cache.  Expected gap, not
+            # a data quality flag.
             method = "no_ipeds_coverage"
         else:
             search_start = min(closed_yr - 1, 2025)
-            search_end   = max(closed_yr - MAX_LOOKBACK, MIN_YEAR)
+            search_end   = max(closed_yr - MAX_LOOKBACK, min_year)
 
             # Pass 1: exact OPEID8 match (most reliable per HANDOFF)
             for yr in range(search_start, search_end - 1, -1):
@@ -382,6 +452,13 @@ def enrich_closure_records(
             **base,
             **(_ipeds_from_row(match) if match else _empty_ipeds()),
             "match_method":           method,
+            "ipeds_opeid6_last_year": str((opeid6_last_year or {}).get(opeid6, "")),
+            "ipeds_cache_max_year":   str(cache_max_year or ""),
+            "ipeds_combined_after_closure": "true" if (
+                match and closed_yr is not None and any(
+                    y >= closed_yr - 1 for y in (combined_years or {}).get(match.get("unitid", ""), ())
+                )
+            ) else "false",
             # SHEEO three counting approaches (declared per row; totals in summary JSON)
             "approach1_all_campuses":     "true",
             "approach2_main_campus_only": "true" if is_main else "false",
@@ -506,7 +583,11 @@ def write_publication_table(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build IPEDS crosswalk and enrich FSA closures.")
-    parser.add_argument("--year-cache-dir", type=Path, default=YEAR_CACHE_DIR)
+    parser.add_argument(
+        "--year-cache-dir", type=Path, action="append", default=None,
+        help="Year-cache directory (repeatable). Default: the Financial Health "
+             "cache plus data/inputs/ipeds/history_year_cache if present.",
+    )
     parser.add_argument(
         "--closure-csv", type=Path, default=None,
         help="FSA closed-school CSV (default: latest fsa_closed_school_*.csv in --out-dir)",
@@ -515,18 +596,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--date", default=date.today().isoformat())
     args = parser.parse_args(argv)
 
-    if not args.year_cache_dir.exists():
-        print(f"ERROR: Year-cache directory not found:\n  {args.year_cache_dir}", file=sys.stderr)
+    cache_dirs = args.year_cache_dir or [YEAR_CACHE_DIR] + (
+        [HISTORY_CACHE_DIR] if HISTORY_CACHE_DIR.exists() else []
+    )
+    missing_dirs = [d for d in cache_dirs if not d.exists()]
+    if missing_dirs:
+        print("ERROR: Year-cache directory not found:\n  "
+              + "\n  ".join(map(str, missing_dirs)), file=sys.stderr)
         return 1
 
     # --- Step 1: Build indexes ---
     print("Loading IPEDS year-cache files...")
-    cache_rows = load_year_cache(args.year_cache_dir)
+    cache_rows = load_year_caches(cache_dirs)
     if not cache_rows:
         print("ERROR: No valid rows loaded from year cache.", file=sys.stderr)
         return 1
     years_found = sorted({r["year"] for r in cache_rows})
+    min_year = int(years_found[0])
     print(f"  {len(cache_rows):,} rows  ({years_found[0]}-{years_found[-1]})")
+    gaps = sorted(set(range(min_year, int(years_found[-1]) + 1)) - {int(y) for y in years_found})
+    if gaps:
+        print(f"  WARNING: missing IPEDS years inside range: {gaps}")
 
     crosswalk_path = args.out_dir / "ipeds_opeid_unitid_by_year.csv"
     write_crosswalk_csv(cache_rows, crosswalk_path)
@@ -551,7 +641,12 @@ def main(argv: list[str] | None = None) -> int:
     closures = _load_csv(closure_csv)
     print(f"  {len(closures):,} records")
 
-    enriched, review = enrich_closure_records(closures, opeid8_idx, opeid6_rows_idx)
+    enriched, review = enrich_closure_records(
+        closures, opeid8_idx, opeid6_rows_idx, min_year,
+        opeid6_last_year=build_opeid6_last_year(cache_rows),
+        cache_max_year=int(years_found[-1]),
+        combined_years=build_combined_years(cache_rows),
+    )
 
     enriched_path = args.out_dir / f"fsa_closure_ipeds_enriched_{args.date}.csv"
     review_path   = args.out_dir / f"ipeds_crosswalk_review_queue_{args.date}.csv"
@@ -619,7 +714,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nEnrichment results ({len(closures):,} records):")
     print(f"  matched (opeid8 / opeid6): {matched:,}")
-    print(f"  no IPEDS coverage (<2015): {no_cov:,}")
+    print(f"  no IPEDS coverage (<={min_year}): {no_cov:,}")
     print(f"  no closure date          : {no_date:,}")
     print(f"  no match (in-window)     : {no_match:,}")
     print(f"  review queue rows        : {len(review):,}")
