@@ -1052,3 +1052,46 @@ class TestMergersTab:
         got = [dict(zip(data[0], r)) for r in data[1:]]
         assert [(g["school_name"], g["outcome"]) for g in got] == [("Watkins", "merger"), ("EDS", "affiliation")]
         assert got[0]["evidence_url"] == "u1" and got[0]["fsa_closed_year"] == "2020"
+
+
+class TestInstitutionOnlyPublishedTab:
+    def test_split_by_scope(self):
+        rows = [{"closure_scope": "institution", "x": 1}, {"closure_scope": "campus", "x": 2},
+                {"closure_scope": "institution", "x": 3}]
+        inst, camp = pgs._split_by_scope(rows)
+        assert [r["x"] for r in inst] == [1, 3] and [r["x"] for r in camp] == [2]
+
+    def test_published_tab_gets_institutions_and_campus_tab_gets_campuses(self, tmp_path):
+        _write_events_csv(tmp_path, _sample_events())
+        written: dict[str, list] = {}
+
+        class _WS:
+            def __init__(self, name):
+                self.name = name
+            def clear(self):
+                pass
+            def update(self, _a1, data):
+                written[self.name] = data
+            def get_all_records(self, **_kw):
+                return []
+            def col_values(self, _i):
+                return []
+
+        class _SH:
+            def worksheet(self, name):
+                return _WS(name)
+            def add_worksheet(self, title, rows, cols):
+                return _WS(title)
+
+        class _GC:
+            def open_by_key(self, _k):
+                return _SH()
+
+        with patch.object(pgs, "DERIVED", tmp_path), \
+             patch("push_to_gsheet._get_gspread_client", return_value=_GC()):
+            pgs.push("FAKE_SHEET_ID", "published")
+        pub_hdr, *pub_rows = written["published"]
+        camp_hdr, *camp_rows = written[pgs.CAMPUS_TAB]
+        scope = pub_hdr.index("closure_scope")
+        assert pub_rows and all(r[scope] == "institution" for r in pub_rows)
+        assert all(r[camp_hdr.index("closure_scope")] == "campus" for r in camp_rows)

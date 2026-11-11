@@ -376,6 +376,18 @@ def _build_published_dicts(path: Path, min_year: int = PUBLISHED_MIN_YEAR) -> li
     return _filter_published_rows(raw, min_year)
 
 
+# The published table (the tracker's list) is institution closures only.
+# Campus closures that report separately to IPEDS go to their own tab, as
+# context for the story (a minimum count, not a headline).
+CAMPUS_TAB = "campus_closures"
+
+
+def _split_by_scope(pub: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Return (institution rows, campus rows)."""
+    return ([d for d in pub if d["closure_scope"] == "institution"],
+            [d for d in pub if d["closure_scope"] == "campus"])
+
+
 def _pub_dicts_to_rows(pub: list[dict]) -> list[list]:
     """Convert published dicts to list-of-lists for gspread (header first)."""
     return [_PUBLIC_COLS] + [[d[c] for c in _PUBLIC_COLS] for d in pub]
@@ -624,7 +636,10 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["TABS"],
         ["closure_list — complete candidate ledger and structured evidence; no candidate type is hidden."],
         ["overrides — one combined pending/resolved review queue keyed by closure_event_id."],
-        ["published — resolved and auto_resolved institution_closure and campus_closure rows only."],
+        ["published — the tracker's list: institution (main-campus) closures only."],
+        ["campus_closures — closed campuses that report separately to IPEDS while their college continued."],
+        ["  A MINIMUM, not a headline: ~14,000 locations closed since 1996 while their college continued,"],
+        ["  most reporting under the parent (incl. extension and high-school sites). Also in by_year/by_state."],
         ["by_year — institution-only total plus separate campus/all-event columns."],
         ["by_state — institution-only total plus separate campus/all-event columns."],
         ["mergers — editor-confirmed mergers and affiliations (excluded from closure counts), with basis and source."],
@@ -714,20 +729,20 @@ def push(sheet_id: str, tab: str) -> int:
 
     if tab == "published":
         pub_dicts = _build_published_dicts(events_path)
-        data = _pub_dicts_to_rows(pub_dicts)
         by_year = _build_by_year_data(pub_dicts)
         by_state = _build_by_state_data(pub_dicts)
         _validate_publish_bundle(pub_dicts, by_year, by_state)
+        institution_rows, campus_rows = _split_by_scope(pub_dicts)
+        data = _pub_dicts_to_rows(institution_rows)
         nrows = len(data) - 1
-        inst_n = sum(1 for d in pub_dicts if d["closure_scope"] == "institution")
-        camp_n = sum(1 for d in pub_dicts if d["closure_scope"] == "campus")
-        print(f"  {nrows:,} records → '{tab}' tab "
-              f"({inst_n:,} institution, {camp_n:,} campus)")
+        print(f"  {nrows:,} institution closures → '{tab}' tab; "
+              f"{len(campus_rows):,} → '{CAMPUS_TAB}' tab")
         ws = _open_or_create_tab(sh, tab, len(_PUBLIC_COLS))
         ws.clear()
         ws.update("A1", data)
         print(f"  Written {nrows:,} rows to '{tab}' tab.")
-        print("Writing aggregated chart tabs…")
+        print("Writing campus and aggregated chart tabs…")
+        _write_tab(sh, CAMPUS_TAB, _pub_dicts_to_rows(campus_rows))
         _write_tab(sh, "by_year", by_year)
         _write_tab(sh, "by_state", by_state)
         _write_tab(sh, "mergers", _build_mergers_data(events_path))

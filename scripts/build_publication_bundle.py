@@ -26,6 +26,7 @@ from push_to_gsheet import (
     _latest_events_csv,
     _load_rows,
     _pub_dicts_to_rows,
+    _split_by_scope,
     _validate_publish_bundle,
 )
 
@@ -128,7 +129,9 @@ def build_bundle(
     changes_path = out_dir / f"publication_changes_{release_date}.csv"
     validation_path = out_dir / f"validation_{release_date}.json"
 
-    _write_table(published_path, _pub_dicts_to_rows(published))
+    institution_rows, campus_rows = _split_by_scope(published)
+    _write_table(published_path, _pub_dicts_to_rows(institution_rows))
+    _write_table(out_dir / f"campus_closures_{release_date}.csv", _pub_dicts_to_rows(campus_rows))
     _write_table(closure_list_path, closure_list)
     _write_table(overrides_out_path, overrides)
     _write_table(by_year_path, by_year)

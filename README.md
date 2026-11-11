@@ -10,9 +10,13 @@ feeds the tracker's tables and Datawrapper charts.
   rebuilds the IPEDS match, classifies every closure and refreshes the Sheet.
   New closures go to editors in the Sheet's `overrides` tab.
 - **On demand:** `.github/workflows/publish-editorial-overrides.yml` pulls
-  editors' decisions from the `overrides` tab and republishes `published`,
-  `by_year`, `by_state` and `mergers` (editor-confirmed mergers and
-  affiliations, which are excluded from closure counts).
+  editors' decisions from the `overrides` tab and republishes:
+  - `published`: the tracker's list, institution (main-campus) closures only;
+  - `campus_closures`: closed campuses that report separately to IPEDS, as
+    context, not a headline;
+  - `by_year` and `by_state`: institution counts, with campus counts alongside;
+  - `mergers`: editor-confirmed mergers and affiliations, which are excluded
+    from closure counts.
 
 # How we count college closures
 
@@ -76,13 +80,22 @@ awaiting an editor:
 His list isn't public, so we can't match the gap school by school. Adding
 confirmed mergers back changes almost nothing (1,752).
 
-**Lower where it should be.** We count 781 campus closures: campuses that
-report to the federal government separately. That is a floor, not a full count.
+**Campuses are context, not part of the list.** The published list is
+institution closures only. Separately, at least 781 campuses that report to the
+federal government on their own closed while their college kept operating. That
+is a floor, not a full count.
 Since 1996, about 14,000 locations closed while their college kept operating,
 and most report under their parent. That group includes real branch campuses but
 also extension, teaching and high-school sites, and federal data can't separate
 them. We also exclude the district programs and mergers that both SHEEO
 and Kelchen count.
+
+**A sentence for the story's introduction**, sourced from the
+`campus_closures` and `by_year` tabs: "Beyond the [N] colleges that closed
+outright, at least 781 branch campuses that reported to the federal government
+separately closed while their college carried on, and federal records list
+roughly 14,000 closed locations of continuing colleges since 1996, many of them
+extension sites and classrooms in high schools."
 
 ## The rule in detail
 
