@@ -39,6 +39,7 @@ from classify_closure_events import (
     EVENT_TYPES,
     PUBLICATION_DECISIONS,
     REVIEW_STATUSES,
+    normalize_closure_type,
 )
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -141,7 +142,7 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
         raw_id = str(row.get("opeid8", "")).strip()
         opeid8 = raw_id.zfill(8) if raw_id else ""
         event_id = str(row.get("closure_event_id", "")).strip()
-        ctype = str(row.get("closure_type", "")).strip()
+        ctype = normalize_closure_type(row.get("closure_type"))
         basis = str(row.get("closure_type_basis", "")).strip()
         status = str(row.get("review_status", "")).strip()
         decision = str(row.get("publication_decision", "")).strip()
@@ -152,7 +153,7 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
         if not status:
             status = "resolved" if ctype else "pending"
         if not decision and status == "resolved" and ctype:
-            if ctype in {"institutional_closure", "for_profit_closure", "system_consolidation"}:
+            if ctype in {"institutional_closure", "system_consolidation"}:
                 decision = "include_institution"
             elif ctype == "branch_closure":
                 decision = "include_campus"
@@ -222,6 +223,7 @@ def _validate_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], in
                 opeid8 if field == "opeid8" else
                 status if field == "review_status" else
                 decision if field == "publication_decision" else
+                normalize_closure_type(row.get(field)) if field == "suggested_closure_type" else
                 ctype if field == "closure_type" else
                 basis if field == "closure_type_basis" else
                 str(row.get("closed_date_iso", "")).strip()

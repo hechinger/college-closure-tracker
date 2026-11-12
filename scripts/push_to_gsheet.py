@@ -46,6 +46,7 @@ import google.auth
 import gspread
 from google.auth.transport.requests import Request as _AuthRequest
 
+from classify_closure_events import normalize_closure_type
 from pull_gsheet_overrides import OVERRIDES_FIELDS
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -164,7 +165,7 @@ def _too_recent_for_ipeds(event: dict) -> bool:
     """Main-campus candidate whose closure year IPEDS cannot test yet."""
     year, max_year = event.get("closed_year", ""), event.get("ipeds_cache_max_year", "")
     return (event.get("candidate_closure_scope") == "institution"
-            and event.get("closure_type") in {"institutional_closure", "for_profit_closure"}
+            and normalize_closure_type(event.get("closure_type")) == "institutional_closure"
             and year.isdigit() and max_year.isdigit() and int(year) >= int(max_year))
 
 
@@ -207,14 +208,15 @@ def _review_context(event: dict, main_close_dates: dict[str, list[str]]) -> dict
         check = _WHAT_TO_CHECK.get(primary, "Check news coverage and state records.")
         if primary == "new_since_baseline":
             decision, ctype = _SCOPE_DECISION.get(event.get("candidate_closure_scope", ""), ("check", ""))
-            if event.get("closure_type") in {"for_profit_closure", "institutional_closure"}:
-                ctype = event["closure_type"]
+            event_type = normalize_closure_type(event.get("closure_type"))
+            if event_type == "institutional_closure":
+                ctype = event_type
         elif not primary and _too_recent_for_ipeds(event):
             why = ("Closed too recently for IPEDS to confirm the school stopped, and FSA still lists "
                    "another location open.")
             check = ("Confirm the whole school closed (news story, state notice, accreditor). If so: "
                      "include_institution. If it continues at another location: exclude.")
-            decision, ctype = "check: likely include", event.get("closure_type", "")
+            decision, ctype = "check: likely include", normalize_closure_type(event.get("closure_type"))
         else:
             decision, ctype = _CHECK_DECISIONS.get(primary, ("check", ""))
 
@@ -254,7 +256,6 @@ PUBLISHED_MIN_YEAR = 1996
 _INSTITUTION_TYPES = frozenset({
     "institutional_closure",
     "system_consolidation",
-    "for_profit_closure",
 })
 
 # Internal classifier types that may become campus-scope published rows.
@@ -419,6 +420,13 @@ def _build_overrides_queue(
             continue
         merged.append({field: str(old.get(field, "")) for field in OVERRIDES_FIELDS})
 
+    # Rewrite legacy whole-institution labels even on preserved editorial or
+    # orphaned rows. The next Sheet refresh therefore finishes the migration
+    # instead of carrying the obsolete value forward indefinitely.
+    for row in merged:
+        row["suggested_closure_type"] = normalize_closure_type(row.get("suggested_closure_type"))
+        row["closure_type"] = normalize_closure_type(row.get("closure_type"))
+
     # Within each status, newest closures first: those are the time-sensitive ones.
     status_order = {"needs_re_review": 0, "pending": 1, "needs_more_evidence": 2, "resolved": 3}
     merged.sort(key=lambda r: (r.get("fsa_closed_date_iso", ""), r.get("opeid8", "")), reverse=True)
@@ -441,7 +449,7 @@ def _filter_published_rows(raw: list[dict], min_year: int = PUBLISHED_MIN_YEAR) 
             continue
 
         decision = r.get("publication_decision", "")
-        internal_type = r.get("closure_type", "")
+        internal_type = normalize_closure_type(r.get("closure_type"))
         location_ceased = r.get("location_operations_ceased", "")
         parent_continued = r.get("parent_continued", "")
         if decision == "include_institution":
