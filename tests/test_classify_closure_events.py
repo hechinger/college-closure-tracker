@@ -270,7 +270,7 @@ class TestClassifyRecords:
         assert "possible_system_consolidation" in branch_row["review_reason"]
 
     def test_for_profit_multi_campus_not_system_consolidation(self):
-        # For-profit chain closing main + branch → for_profit_closure, not system_consolidation
+        # Ownership stays separate from closure type; clustering remains a review signal.
         records = [
             _rec(opeid6="001002", opeid8="00100200", closed_year="2020",
                  control_label="for-profit", is_traditional_college="false"),  # main
@@ -280,12 +280,15 @@ class TestClassifyRecords:
         ]
         result = classify_records(records)
         main_row = next(r for r in result if r["opeid8"] == "00100200")
-        assert main_row["closure_type"] == "for_profit_closure"
+        assert main_row["closure_type"] == "institutional_closure"
+        assert main_row["control_label"] == "for-profit"
+        assert "control = for-profit" in main_row["closure_type_basis"]
 
-    def test_for_profit_closure(self):
+    def test_for_profit_school_uses_institutional_closure(self):
         records = [_rec(control_label="for-profit", is_traditional_college="false")]
         result = classify_records(records)
-        assert result[0]["closure_type"] == "for_profit_closure"
+        assert result[0]["closure_type"] == "institutional_closure"
+        assert result[0]["control_label"] == "for-profit"
 
     def test_institutional_closure_traditional(self):
         records = [_rec(control_label="nonprofit", is_traditional_college="true")]
@@ -713,6 +716,18 @@ class TestLoadOverrides:
         ov = _load_overrides(p)
         assert len(ov) == len(EVENT_TYPES)
 
+    def test_legacy_for_profit_closure_is_normalized(self, tmp_path):
+        p = _write_overrides_csv(tmp_path, [{
+            "closure_event_id": "fsa:03005400:2026-10-02",
+            "opeid8": "03005400",
+            "review_status": "resolved",
+            "publication_decision": "include_institution",
+            "closure_type": "for_profit_closure",
+            "closure_type_basis": "Editorial: institution ceased operations",
+        }])
+        ov = _load_overrides(p)
+        assert ov["fsa:03005400:2026-10-02"]["closure_type"] == "institutional_closure"
+
     def test_empty_file_returns_empty_dict(self, tmp_path):
         p = _write_overrides_csv(tmp_path, [])
         ov = _load_overrides(p)
@@ -725,7 +740,7 @@ class TestLoadOverrides:
 
 class TestClassifyRecordsOverrides:
     def test_override_supersedes_institutional_closure(self, tmp_path):
-        # Without override: for-profit → for_profit_closure; with override → merger_absorption
+        # Without override: institutional closure; with override: merger absorption.
         records = [_rec(opeid8="00219300", control="3", control_label="for-profit")]
         p = _write_overrides_csv(tmp_path, [
             {"opeid8": "00219300", "closure_type": "merger_absorption",

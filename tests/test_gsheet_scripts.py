@@ -299,7 +299,7 @@ class TestFilterPublishedRows:
         assert len(result) == 1
         assert result[0]["closure_scope"] == "institution"
 
-    def test_for_profit_closure_becomes_institution_scope(self):
+    def test_legacy_for_profit_closure_becomes_institution_scope(self):
         rows = [_inst_event(closure_type="for_profit_closure",
                             is_traditional_college="false",
                             control_label="for-profit")]
@@ -883,6 +883,20 @@ class TestValidateRows:
         assert len(valid) == 1
         assert errors == 0
 
+    def test_legacy_for_profit_values_are_normalized(self):
+        rows = [{"closure_event_id": "fsa:03005400:2026-10-02",
+                 "opeid8": "03005400", "school_name": "Georgia Career Institute",
+                 "state": "GA", "fsa_closed_date_iso": "2026-10-02",
+                 "suggested_closure_type": "for_profit_closure",
+                 "review_status": "resolved", "publication_decision": "include_institution",
+                 "closure_type": "for_profit_closure",
+                 "closure_type_basis": "Editorial: institution ceased operations",
+                 "location_operations_ceased": "true", "parent_continued": "false"}]
+        valid, errors = pgso._validate_rows(rows)
+        assert errors == 0
+        assert valid[0]["closure_type"] == "institutional_closure"
+        assert valid[0]["suggested_closure_type"] == "institutional_closure"
+
     def test_empty_opeid8_skipped(self):
         rows = [{"opeid8": "", "closure_type": "merger_absorption",
                  "closure_type_basis": "x", "editor_note": ""}]
@@ -1117,10 +1131,28 @@ class TestOverridesReviewContext:
         r = self._row([self._ev()])[0]
         assert "too recently for IPEDS" in r["why_flagged"]
         assert r["suggested_decision"] == "check: likely include"
+        assert r["suggested_closure_type"] == "institutional_closure"
         assert r["college_navigator_url"].endswith("id=216427")
         assert "Test+Tech" in r["news_search_url"]
         assert r["other_locations_evidence"].startswith("FSA lists another location open")
         assert "RT01" not in r["other_locations_evidence"]
+
+    def test_preserved_editorial_row_rewrites_legacy_closure_type(self):
+        event = self._ev(review_required="false", review_status="resolved",
+                         closure_type="institutional_closure")
+        existing = [{
+            "closure_event_id": event["closure_event_id"],
+            "opeid8": event["opeid8"],
+            "review_status": "resolved",
+            "publication_decision": "include_institution",
+            "closure_type": "for_profit_closure",
+            "closure_type_basis": "Editorial: institution ceased operations",
+            "location_operations_ceased": "true",
+            "parent_continued": "false",
+        }]
+        queue = pgs._build_overrides_queue([event], existing)
+        row = dict(zip(queue[0], queue[1]))
+        assert row["closure_type"] == "institutional_closure"
 
     def test_possible_merger_suggestion(self):
         r = self._row([self._ev(closed_year="2020", review_reason="ipeds_status_combined_with_other_institution")])[0]

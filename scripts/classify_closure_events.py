@@ -79,7 +79,6 @@ EVENT_TYPES = (
     "branch_closure",
     "merger_absorption",
     "system_consolidation",
-    "for_profit_closure",
     "institutional_closure",
     "title_iv_withdrawal",
     "reinstated",
@@ -93,6 +92,20 @@ EVENT_TYPES = (
     "foreign_location",
     "unclassified",
 )
+
+# The first classifier used a separate closure type for for-profit schools.
+# Ownership now lives in control_label, while every whole-school closure uses
+# institutional_closure.  Normalize the old value at input boundaries so
+# historical editorial decisions remain readable without emitting it again.
+LEGACY_EVENT_TYPE_ALIASES = {
+    "for_profit_closure": "institutional_closure",
+}
+
+
+def normalize_closure_type(value: object) -> str:
+    closure_type = str(value or "").strip()
+    return LEGACY_EVENT_TYPE_ALIASES.get(closure_type, closure_type)
+
 
 REVIEW_STATUSES = frozenset({"pending", "resolved", "needs_more_evidence", "needs_re_review"})
 # Pipeline-only status for base-table rows that meet the automatic
@@ -310,7 +323,7 @@ def _load_overrides(path: Path) -> dict[str, dict]:
             raw_opeid8 = (row.get("opeid8") or "").strip()
             opeid8 = raw_opeid8.zfill(8) if raw_opeid8 else ""
             event_id = (row.get("closure_event_id") or "").strip()
-            ctype = (row.get("closure_type") or "").strip()
+            ctype = normalize_closure_type(row.get("closure_type"))
             basis = (row.get("closure_type_basis") or "").strip()
             status = (row.get("review_status") or "").strip()
 
@@ -334,7 +347,7 @@ def _load_overrides(path: Path) -> dict[str, dict]:
 
             decision = (row.get("publication_decision") or "").strip()
             if not decision:
-                if ctype in {"institutional_closure", "for_profit_closure", "system_consolidation"}:
+                if ctype in {"institutional_closure", "system_consolidation"}:
                     decision = "include_institution"
                 elif ctype == "branch_closure":
                     decision = "include_campus"
@@ -450,7 +463,7 @@ def _auto_decision(
         return ""  # parent ended without a nearby main-campus close: editor decides
     if closure_type == "branch_closure" and parent_continued == "true":
         return "include_campus"
-    if closure_type in {"institutional_closure", "for_profit_closure"} and parent_continued == "false":
+    if closure_type == "institutional_closure" and parent_continued == "false":
         return "include_institution"
     return ""
 
@@ -698,7 +711,7 @@ def classify_records(
                     # and teaching sites, including K-12 dual-enrollment sites.
                     review_reasons.append("postsecondary_location_identity_unresolved")
         elif control == "for-profit":
-            closure_type = "for_profit_closure"
+            closure_type = "institutional_closure"
             basis = "Main-location closure candidate; historical IPEDS control = for-profit"
         elif is_traditional:
             closure_type = "institutional_closure"
@@ -721,7 +734,7 @@ def classify_records(
             basis = "Main-location candidate lacks resolved historical IPEDS identity"
             review_reasons.append("institution_identity_unresolved")
 
-        if closure_type in {"institutional_closure", "for_profit_closure"} and parent_continued != "false":
+        if closure_type == "institutional_closure" and parent_continued != "false":
             # Financial Health evidence is a one-time input for the base table
             # only; closures first seen after the freeze get plain editor review.
             in_base = event_id in (auto_baseline or frozenset())
@@ -1041,7 +1054,6 @@ def main(argv: list[str] | None = None) -> int:
         "event_type_notes": {
             "branch_closure": "Candidate only: exact IPEDS identity plus an active RT01 sibling; requires resolution",
             "institutional_closure": "Candidate only: main location plus historical IPEDS identity; requires resolution",
-            "for_profit_closure": "Candidate only: main location plus historical IPEDS for-profit control",
             "identifier_replacement": "Dated RT06 old-to-new relationship plus active exact RT01 successor; requires review",
             "merger_absorption": "Editorial outcome only; RT11 is never merger evidence",
             "system_consolidation": "Editorial outcome only; clustered OPEID6 closes merely trigger review",

@@ -140,7 +140,9 @@ enrollment, College Navigator and news-search links, what federal records show
 about other locations, and who holds the student records. Suggestions are never
 applied; an editor's decision is. Every closure first seen after the base table
 was frozen also goes to an editor, with a suggested decision where one
-applies.
+applies. Whole-school suggestions use `institutional_closure` for every type of
+school. Public, nonprofit or for-profit ownership stays in the separate
+`control` field. Campus closures remain a separate category.
 
 ## Limitations
 
