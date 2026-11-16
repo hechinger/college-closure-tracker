@@ -11,17 +11,24 @@ feeds the tracker's tables and Datawrapper charts.
   New closures go to editors in the Sheet's `overrides` tab.
 - **On demand:** `.github/workflows/publish-editorial-overrides.yml` pulls
   editors' decisions from the `overrides` tab and republishes:
-  - `published`: the tracker's list, institution (main-campus) closures only;
+  - `published`: the tracker's list, institution (main-campus) closures from
+    2007 on;
+  - `historical_closures`: institution closures from 1996 through 2006, kept
+    for reference but not in the tracker or its charts;
   - `campus_closures`: closed campuses that report separately to IPEDS, as
-    context, not a headline;
-  - `by_year` and `by_state`: institution counts, with campus counts alongside;
+    context, not a headline (2007 on);
+  - `by_year` and `by_state`: institution counts from 2007 on, with campus
+    counts alongside;
   - `mergers`: editor-confirmed mergers and affiliations, which are excluded
     from closure counts.
 
 # How we count college closures
 
-*Figures as of the 2026-11-11 build. The pipeline reruns weekly, so they move
-slightly as federal data updates. The published table covers 1996 onward.*
+*Figures as of the 2026-11-16 build. The pipeline reruns weekly, so they move
+slightly as federal data updates. The published table covers 2007 onward;
+closures from 1996 through 2006 are in the `historical_closures` tab. The
+benchmark comparisons below use both, since Kelchen's window starts in 1996.
+Unreviewed cases from before 2007 are no longer in the editors' queue.*
 
 ## The rule in brief
 
@@ -50,9 +57,9 @@ slightly as federal data updates. The published table covers 1996 onward.*
 
 | | Their count | Ours |
 |---|---|---|
-| SHEEO method, closures 2008–2023 | 848 | 1,036 |
+| SHEEO method, closures 2008–2023 | 848 | 1,048 |
 | Same, colleges offering an associate degree or higher | 287 (Hechinger's earlier "nearly 300") | 415 |
-| Kelchen et al. (Federal Reserve, 2025), main campuses, Jan 1996 – Nov 2023 | 1,661–1,671 | 1,748 |
+| Kelchen et al. (Federal Reserve, 2025), main campuses, Jan 1996 – Nov 2023 | 1,661–1,671 | 1,760 |
 
 **Higher than SHEEO, even though our checks are tighter in most ways.** The
 two rules are strict in different places. SHEEO's method counts a college only
@@ -60,35 +67,37 @@ when every one of its federal location records is marked closed. That
 requirement mostly catches FSA bookkeeping, not schools still operating. FSA often leaves one location marked "open" years after a school
 shut. Examples are ITT Tech, Brightwood College and Presentation College. That
 drops 219 closed colleges from the SHEEO count; IPEDS shows each of them
-stopped operating. Going the other way, we leave out 33 schools SHEEO counts:
+stopped operating. Going the other way, we leave out 21 schools SHEEO counts:
 
 - 12 district or career-tech programs, or administrative offices;
-- 3 satellite IDs belonging to colleges that are still open, such as Olivet
-  Nazarene;
+- 3 satellite IDs, extra federal IDs of colleges that are still open (Olivet
+  Nazarene, Lindenwood) or counted under their main ID (Mountain State);
 - 3 mergers, affiliations or reinstatements;
-- 15 still unresolved (awaiting an editor, or no main-campus record).
+- 2 possible mergers awaiting an editor (Mills College and the Augusta Area
+  Dietetic Internship);
+- 1 with no main-campus record in the FSA file.
 
 **Higher than Kelchen because the federal file has grown, not because our
 rule is looser.** Applied to today's federal file, Kelchen's own rule (main
-campus closed, matched to IPEDS) gives 1,825, more than our 1,748. The file now
+campus closed, matched to IPEDS) gives 1,825, more than our 1,760. The file now
 lists 1,973 main-campus closures for his period, about 250 more than the
 roughly 1,726 in his November 2023 source (1,671 matched plus 55 he couldn't
-match). We publish 1,748 of those 1,973. The rest are excluded or
-awaiting an editor:
+match). We count 1,760 of those 1,973. The rest are excluded or
+unresolved:
 
 - 37 district programs or administrative offices;
 - 6 mergers, affiliations or identifier changes;
 - 6 reinstated schools;
-- 176 awaiting editors.
+- 164 unresolved (cases from before 2007 are no longer reviewed).
 
 His list isn't public, so we can't match the gap school by school. Adding
-confirmed mergers back changes almost nothing (1,752).
+confirmed mergers back changes almost nothing (1,764).
 
 **Campuses are context, not part of the list.** The published list is
-institution closures only. Separately, at least 781 campuses that report to the
-federal government on their own closed while their college kept operating. That
+institution closures only. Separately, since 2007 at least 631 campuses that
+report to the federal government on their own closed while their college kept operating. That
 is a floor, not a full count.
-Since 1996, about 14,000 locations closed while their college kept operating,
+Since 2007, about 11,600 locations closed while their college kept operating,
 and most report under their parent. That group includes real branch campuses but
 also extension, teaching and high-school sites, and federal data can't separate
 them. We also exclude the district programs and mergers that both SHEEO
@@ -96,9 +105,9 @@ and Kelchen count.
 
 **A sentence for the story's introduction**, sourced from the
 `campus_closures` and `by_year` tabs: "Beyond the [N] colleges that closed
-outright, at least 781 branch campuses that reported to the federal government
+outright, at least 631 branch campuses that reported to the federal government
 separately closed while their college carried on, and federal records list
-roughly 14,000 closed locations of continuing colleges since 1996, many of them
+more than 11,000 closed locations of continuing colleges since 2007, many of them
 extension sites and classrooms in high schools."
 
 ## The rule in detail

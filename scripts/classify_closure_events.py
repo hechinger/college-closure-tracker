@@ -495,6 +495,11 @@ def _hechinger_tracker_match(row: dict, opeid6: str, tracker: dict[str, list[dic
     closed = _parse_iso(row.get("closed_date_iso", ""))
     if not (tracker and year.isdigit() and closed and closed <= HECHINGER_TRACKER_AS_OF):
         return None
+    if not opeid6.startswith("0"):
+        # Satellite OPEID6 (leading 1-9): an extra ID of a college that may
+        # still be open (Olivet Nazarene) or is counted under its own ID
+        # (Mountain State). SHEEO's method counts these; we don't.
+        return None
     for t in tracker.get(opeid6, []):
         if abs(int(t["year_of_closure"]) - int(year)) <= 1:
             return t

@@ -20,7 +20,8 @@ from push_to_gsheet import (
     _build_by_state_data,
     _build_by_year_data,
     _build_overrides_queue,
-    _build_published_dicts,
+    _build_publication_sets,
+    HISTORICAL_TAB,
     _build_mergers_data,
     _build_readme_data,
     _latest_events_csv,
@@ -111,7 +112,7 @@ def build_bundle(
     with events_path.open(encoding="utf-8", newline="") as fh:
         events = list(csv.DictReader(fh))
 
-    published = _build_published_dicts(events_path)
+    published, historical = _build_publication_sets(events_path)
     by_year = _build_by_year_data(published)
     by_state = _build_by_state_data(published)
     _validate_publish_bundle(published, by_year, by_state)
@@ -132,6 +133,7 @@ def build_bundle(
     institution_rows, campus_rows = _split_by_scope(published)
     _write_table(published_path, _pub_dicts_to_rows(institution_rows))
     _write_table(out_dir / f"campus_closures_{release_date}.csv", _pub_dicts_to_rows(campus_rows))
+    _write_table(out_dir / f"{HISTORICAL_TAB}_{release_date}.csv", _pub_dicts_to_rows(historical))
     _write_table(closure_list_path, closure_list)
     _write_table(overrides_out_path, overrides)
     _write_table(by_year_path, by_year)
@@ -152,6 +154,7 @@ def build_bundle(
         "published_count": len(published),
         "institution_closures": sum(1 for r in published if r["closure_scope"] == "institution"),
         "campus_closures": sum(1 for r in published if r["closure_scope"] == "campus"),
+        "historical_institution_closures": len(historical),
         "review_queue_count": len(overrides) - 1,
         "change_counts": {
             status: sum(1 for row in changes if row["change_status"] == status)

@@ -1123,6 +1123,13 @@ class TestHechingerTrackerBaseTable:
                              auto_baseline=self._BASE, hechinger_tracker=self._TRACKER)[0]
         assert r["closure_type"] == "merger_absorption" and r["publication_decision"] == "exclude"
 
+    def test_satellite_opeid6_not_matched(self):
+        tracker = {"101741": [dict(self._TRACKER["001002"][0], opeid6="101741")]}
+        rt01 = {"101741": [{"opeid8": "10174100", "close_date_iso": "2018-06-01", "reinstate_date_iso": ""}]}
+        r = classify_records([self._unresolved_main(opeid8="10174100", opeid6="101741")],
+                             rt01_by_opeid6=rt01, auto_baseline=frozenset(), hechinger_tracker=tracker)[0]
+        assert r["review_required"] == "true"
+
     def test_load_tracker(self, tmp_path):
         from classify_closure_events import _load_hechinger_tracker
         p = tmp_path / "t.csv"

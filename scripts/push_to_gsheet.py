@@ -246,9 +246,13 @@ def _review_context(event: dict, main_close_dates: dict[str, list[str]]) -> dict
 # Publication filters
 # ---------------------------------------------------------------------------
 
-# First closure year in published/by_year/by_state and the review queue.
-# 1996 matches Kelchen et al.'s window; IPEDS history starts in 1995.
-PUBLISHED_MIN_YEAR = 1996
+# First closure year in published/by_year/by_state/campus_closures and the
+# review queue. Earlier institution closures (back to 1996, Kelchen et al.'s
+# window; IPEDS history starts in 1995) go to the historical tab, unreviewed
+# leftovers included only once an editor decides them.
+PUBLISHED_MIN_YEAR = 2007
+HISTORICAL_MIN_YEAR = 1996
+HISTORICAL_TAB = "historical_closures"
 
 # Internal classifier types that map to institution-scope published rows.
 _INSTITUTION_TYPES = frozenset({
@@ -355,11 +359,14 @@ def _build_overrides_queue(
     seen: set[str] = set()
     for event in events:
         year = str(event.get("closed_year", ""))
-        if not year.isdigit() or int(year) < min_year:
-            continue
         event_id = str(event.get("closure_event_id", "")).strip()
         if not event_id:
             continue
+        if not year.isdigit() or int(year) < min_year:
+            # Before the published window: no longer queued for review, but
+            # keep any decision an editor already made (historical tab).
+            if not _has_editorial_decision(existing_by_event.get(event_id)):
+                continue
         if event.get("review_required") != "true" and not _has_editorial_decision(existing_by_event.get(event_id)):
             # Resolved by the pipeline itself (reinstatement, automatic tier or
             # exclusion): no editorial decision to show. Rows an earlier push
@@ -520,6 +527,16 @@ def _build_published_dicts(path: Path, min_year: int = PUBLISHED_MIN_YEAR) -> li
 # Campus closures that report separately to IPEDS go to their own tab, as
 # context for the story (a minimum count, not a headline).
 CAMPUS_TAB = "campus_closures"
+
+
+def _build_publication_sets(path: Path) -> tuple[list[dict], list[dict]]:
+    """Return (published rows from PUBLISHED_MIN_YEAR on, historical institution
+    closures from HISTORICAL_MIN_YEAR up to PUBLISHED_MIN_YEAR)."""
+    every = _build_published_dicts(path, HISTORICAL_MIN_YEAR)
+    current = [d for d in every if int(d["closed_year"]) >= PUBLISHED_MIN_YEAR]
+    historical = [d for d in every
+                  if int(d["closed_year"]) < PUBLISHED_MIN_YEAR and d["closure_scope"] == "institution"]
+    return current, historical
 
 
 def _split_by_scope(pub: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -779,12 +796,14 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["TABS"],
         ["closure_list — complete candidate ledger and structured evidence; no candidate type is hidden."],
         ["overrides — one combined pending/resolved review queue keyed by closure_event_id."],
-        ["published — the tracker's list: institution (main-campus) closures only."],
+        ["published — the tracker's list: institution (main-campus) closures, 2007 on."],
+        ["historical_closures — institution closures 1996-2006, for reference; not in the tracker or charts."],
+        ["  Unreviewed pre-2007 cases are no longer queued; editors' earlier decisions still apply."],
         ["campus_closures — closed campuses that report separately to IPEDS while their college continued."],
-        ["  A MINIMUM, not a headline: ~14,000 locations closed since 1996 while their college continued,"],
+        ["  A MINIMUM, not a headline: ~11,600 locations closed since 2007 while their college continued,"],
         ["  most reporting under the parent (incl. extension and high-school sites). Also in by_year/by_state."],
-        ["by_year — institution-only total plus separate campus/all-event columns."],
-        ["by_state — institution-only total plus separate campus/all-event columns."],
+        ["by_year — institution-only total plus separate campus/all-event columns (2007 on)."],
+        ["by_state — institution-only total plus separate campus/all-event columns (2007 on)."],
         ["mergers — editor-confirmed mergers and affiliations (excluded from closure counts), with basis and source."],
         [""],
         ["OVERRIDES WORKFLOW"],
@@ -816,15 +835,15 @@ def _build_readme_data(generated_at: str = "") -> list[list]:
         ["  to IPEDS as active)."],
         ["  Mergers are not closures (see the mergers tab). Every new closure is reviewed by an editor."],
         ["  Chains that held separate federal approvals for several schools count once per school."],
-        ["vs SHEEO (2008-2023: 848 vs our 1,036; associate-or-higher 287 vs our 415): the rules are strict in"],
+        ["vs SHEEO (2008-2023: 848 vs our 1,048; associate-or-higher 287 vs our 415): the rules are strict in"],
         ["  different places. SHEEO counts a college"],
         ["  only when EVERY federal location record is closed. FSA often leaves one marked open after a school"],
-        ["  shuts (ITT Tech, Brightwood, Presentation College), dropping 219 closed colleges. We leave out 33"],
+        ["  shuts (ITT Tech, Brightwood, Presentation College), dropping 219 closed colleges. We leave out 21"],
         ["  SHEEO counts: district programs, satellite IDs of open colleges, mergers, unresolved cases."],
-        ["vs Kelchen et al. (Jan 1996-Nov 2023: 1,661-1,671 vs our 1,748): the federal file has grown. His own"],
-        ["  rule applied to today's file gives 1,825, more than ours; adding mergers back gives just 1,752."],
-        ["Campus closures (781) are a FLOOR: only campuses that report to IPEDS separately. ~14,000 locations"],
-        ["  closed since 1996 while their college continued, incl. extension and high-school sites."],
+        ["vs Kelchen et al. (Jan 1996-Nov 2023: 1,661-1,671 vs our 1,760, incl. historical tab): the federal file has grown. His own"],
+        ["  rule applied to today's file gives 1,825, more than ours; adding mergers back gives just 1,764."],
+        ["Campus closures (631 since 2007) are a FLOOR: only campuses that report to IPEDS separately. ~11,600"],
+        ["  locations closed since 2007 while their college continued, incl. extension and high-school sites."],
         ["Limitation: a school that left federal aid but kept teaching would look closed; rare, editors check."],
         ["In scope: 50 states, DC, PR, GU, VI, AS, MP. Out: foreign locations and the freely associated states."],
         [""],
@@ -879,7 +898,7 @@ def push(sheet_id: str, tab: str) -> int:
     print(f"Loading {events_path.name} …")
 
     if tab == "published":
-        pub_dicts = _build_published_dicts(events_path)
+        pub_dicts, historical_rows = _build_publication_sets(events_path)
         by_year = _build_by_year_data(pub_dicts)
         by_state = _build_by_state_data(pub_dicts)
         _validate_publish_bundle(pub_dicts, by_year, by_state)
@@ -894,6 +913,9 @@ def push(sheet_id: str, tab: str) -> int:
         print(f"  Written {nrows:,} rows to '{tab}' tab.")
         print("Writing campus and aggregated chart tabs…")
         _write_tab(sh, CAMPUS_TAB, _pub_dicts_to_rows(campus_rows))
+        _write_tab(sh, HISTORICAL_TAB, _pub_dicts_to_rows(historical_rows))
+        print(f"  {len(historical_rows):,} institution closures {HISTORICAL_MIN_YEAR}-{PUBLISHED_MIN_YEAR - 1} "
+              f"→ '{HISTORICAL_TAB}' tab")
         _write_tab(sh, "by_year", by_year)
         _write_tab(sh, "by_state", by_state)
         _write_tab(sh, "mergers", _build_mergers_data(events_path))
