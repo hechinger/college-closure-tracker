@@ -174,7 +174,12 @@ school. Public, nonprofit or for-profit ownership stays in the separate
    year" and "never reports again after the closure year."
 5. **Campus counts are a floor.** Only separately reported campuses count.
 6. **"Associate degree or higher"** uses the highest degree a school offered in
-   IPEDS before closing. SHEEO used FSA program length.
+   IPEDS before closing (HDEGOFR1), which is also how the `credential_level`
+   column and the `by_year` degree columns are built. A two-year school that
+   IPEDS lists as non-degree-granting counts as non-degree. SHEEO used FSA's
+   self-reported program length instead; on that measure ours is 425 for
+   2008–2023, not 415. FSA's codes are less reliable: they list a beauty school
+   as "first professional" and a career institute as "doctor's".
 7. **This is our method, not a federal standard.** We publish the rule and this
    reconciliation so it can be checked.
 

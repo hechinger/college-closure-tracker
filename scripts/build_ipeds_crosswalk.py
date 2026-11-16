@@ -305,7 +305,14 @@ def _credential_level(iclevel: str, highest_degree: str) -> str:
 
     highest_degree is IPEDS HDEGOFR1: 11-14 doctoral, 20 master's,
     30 bachelor's, 40 associate's, 0 non-degree.
+
+    A school IPEDS lists as non-degree-granting (HDEGOFR1 = 0) is
+    "Non-degree" at any level: many two-year-level schools award only
+    certificates, and calling them "Associate's" overstated degree-granting
+    closures (the "associate degree or higher" figure uses HDEGOFR1).
     """
+    if iclevel in {"1", "2"} and highest_degree == "0":
+        return "Non-degree"
     if iclevel == "2":
         return "Associate's"
     if iclevel == "3":
