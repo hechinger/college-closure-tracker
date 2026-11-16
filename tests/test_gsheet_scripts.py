@@ -1179,3 +1179,47 @@ class TestOverridesReviewContext:
     def test_suggestions_never_fill_decision_columns(self):
         r = self._row([self._ev()])[0]
         assert r["publication_decision"] == "" and r["closure_type"] == "" and r["review_status"] == "pending"
+
+
+class TestHistoricalSplit:
+    """Published starts in 2007; 1996-2006 institution closures go to the historical tab."""
+
+    def _write(self, tmp_path, rows):
+        p = tmp_path / "events.csv"
+        fields = sorted({k for r in rows for k in r})
+        with p.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=fields)
+            w.writeheader()
+            w.writerows(rows)
+        return p
+
+    def test_split_by_year(self, tmp_path):
+        rows = [
+            _inst_event(opeid8="00111100", opeid6="001111", closure_event_id="fsa:00111100:1995-06-01",
+                        closed_date_iso="1995-06-01", closed_year="1995"),
+            _inst_event(opeid8="00222200", opeid6="002222", closure_event_id="fsa:00222200:2000-06-01",
+                        closed_date_iso="2000-06-01", closed_year="2000"),
+            _inst_event(opeid8="00333300", opeid6="003333", closure_event_id="fsa:00333300:2006-12-31",
+                        closed_date_iso="2006-12-31", closed_year="2006"),
+            _inst_event(opeid8="00444400", opeid6="004444", closure_event_id="fsa:00444400:2007-01-01",
+                        closed_date_iso="2007-01-01", closed_year="2007"),
+        ]
+        current, historical = pgs._build_publication_sets(self._write(tmp_path, rows))
+        assert [r["opeid8"] for r in current] == ["00444400"]
+        assert sorted(r["opeid8"] for r in historical) == ["00222200", "00333300"]
+
+    def test_queue_drops_pre_window_pending_but_keeps_decisions(self):
+        base = {"opeid6": "001002", "location_suffix": "00", "school_name": "Old", "state": "PA",
+                "review_required": "true", "review_status": "pending", "candidate_closure_scope": "institution"}
+        pending_old = dict(base, closure_event_id="fsa:00100200:2000-01-01", opeid8="00100200",
+                           closed_year="2000", closed_date_iso="2000-01-01")
+        decided_old = dict(base, closure_event_id="fsa:00200200:2001-01-01", opeid8="00200200",
+                           closed_year="2001", closed_date_iso="2001-01-01",
+                           review_required="false", review_status="resolved")
+        recent = dict(base, closure_event_id="fsa:00300200:2010-01-01", opeid8="00300200",
+                      closed_year="2010", closed_date_iso="2010-01-01")
+        existing = [{"closure_event_id": "fsa:00200200:2001-01-01", "review_status": "resolved",
+                     "closure_type": "public_career_tech_program", "publication_decision": "exclude"}]
+        q = pgs._build_overrides_queue([pending_old, decided_old, recent], existing)
+        ids = [dict(zip(q[0], r))["closure_event_id"] for r in q[1:]]
+        assert sorted(ids) == ["fsa:00200200:2001-01-01", "fsa:00300200:2010-01-01"]
