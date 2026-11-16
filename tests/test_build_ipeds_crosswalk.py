@@ -784,6 +784,12 @@ class TestCredentialLevel:
     def test_two_year_is_associate(self):
         assert _credential_level("2", "40") == "Associate's"
 
+    def test_non_degree_granting_is_non_degree_at_any_level(self):
+        # Two-year-level schools that award only certificates are not
+        # associate-degree colleges (HDEGOFR1 = 0).
+        assert _credential_level("2", "0") == "Non-degree"
+        assert _credential_level("1", "0") == "Non-degree"
+
     def test_less_than_two_year(self):
         assert _credential_level("3", "0") == "Non-degree"
         assert _credential_level("3", "40") == "Certificate"
