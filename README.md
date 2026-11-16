@@ -118,6 +118,13 @@ extension sites and classrooms in high schools."
    institution," the case goes to an editor.
 5. Not later reinstated, and no exact replacement identifier.
 
+**Carried over from Hechinger's earlier tracker.** A closure dated on or before
+Feb. 10, 2025, also counts when Hechinger's previous tracker (built on SHEEO's
+method) already counted the same school (same OPEID6) as closed within a year of
+the FSA date, even without a usable IPEDS match. Its other closed locations are
+counted once, through the institution. Possible mergers still go to an editor.
+Later closures always get editor review.
+
 **Campus closure:** a location with **its own** IPEDS record closed while the
 school kept operating. When a whole chain shut down, its locations are counted
 once, through the institution closure.
@@ -164,7 +171,9 @@ applies.
 
 FSA closed-school file and Weekly School File (weekly); IPEDS directory and
 enrollment files, 1995–2025; a one-time snapshot of the Hechinger Financial
-Health tracker's confirmed closures (base table only); and editors' decisions,
+Health tracker's confirmed closures (base table only); Hechinger's previous
+closure tracker, as of February 2025 (`data/manual/external/hechinger_tracker_2024.csv`,
+850 schools with federal IDs); and editors' decisions,
 each with a source link.
 [Kelchen et al., FEDS 2025-003](https://www.federalreserve.gov/econres/feds/files/2025003pap.pdf).
 [SHEEO college closures project](https://sheeo.org/project/college-closures/).

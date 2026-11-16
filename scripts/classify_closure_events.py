@@ -60,6 +60,11 @@ AUTO_BASELINE_DEFAULT = MANUAL / "auto_publish_baseline.csv"
 # Editorially confirmed closures from the Financial Health tracker
 # (scripts/fetch_financial_health_closures.py).
 FH_CLOSURES_DEFAULT = MANUAL / "external" / "financial_health_closures.csv"
+# Hechinger's own published tracker (SHEEO-based, closures 2008-2024, as of
+# February 2025). Resolves only closures dated on or before its as-of date;
+# anything later goes to editors.
+HECHINGER_TRACKER_DEFAULT = MANUAL / "external" / "hechinger_tracker_2024.csv"
+HECHINGER_TRACKER_AS_OF = date(2025, 2, 10)
 
 # When an OPEID6 has closed campuses spanning more than this many years,
 # we don't call it a consolidation — it's more likely separate closure events.
@@ -467,6 +472,35 @@ def _load_fh_closures(path: Path) -> dict[str, list[dict]]:
     return dict(out)
 
 
+def _load_hechinger_tracker(path: Path) -> dict[str, list[dict]]:
+    """Return {opeid6: [tracker rows]} from the Hechinger tracker snapshot."""
+    if not path.exists():
+        return {}
+    out: dict[str, list[dict]] = defaultdict(list)
+    with path.open(encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            opeid6 = (row.get("opeid6") or "").strip()
+            if opeid6 and (row.get("year_of_closure") or "").strip().isdigit():
+                out[opeid6.zfill(6)].append(row)
+    return dict(out)
+
+
+def _hechinger_tracker_match(row: dict, opeid6: str, tracker: dict[str, list[dict]] | None) -> dict | None:
+    """Tracker row for this school closing within a year of the FSA date, else None.
+
+    The tracker dates a school by its last location's closure, so allow one
+    year either way.
+    """
+    year = row.get("closed_year", "")
+    closed = _parse_iso(row.get("closed_date_iso", ""))
+    if not (tracker and year.isdigit() and closed and closed <= HECHINGER_TRACKER_AS_OF):
+        return None
+    for t in tracker.get(opeid6, []):
+        if abs(int(t["year_of_closure"]) - int(year)) <= 1:
+            return t
+    return None
+
+
 def _institution_ceased_evidence(
     row: dict,
     parent_continued: str,
@@ -590,6 +624,7 @@ def classify_records(
     rt01_by_opeid6: dict[str, list[dict]] | None = None,
     auto_baseline: frozenset[str] | None = None,
     fh_closures: dict[str, list[dict]] | None = None,
+    hechinger_tracker: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     """
     Attach candidate labels, structured evidence, and editorial decisions.
@@ -777,6 +812,35 @@ def classify_records(
                 "dated RT01 sibling evidence, no reinstatement or exact replacement"
             )
             review_reasons = [x for x in review_reasons if x != "operational_closure_unverified"]
+        elif (not exclusion and review_required == "true"
+              and "ipeds_status_combined_with_other_institution" not in review_reasons
+              and (tracker_row := _hechinger_tracker_match(r, opeid6, hechinger_tracker))):
+            # Hechinger's own tracker already counted this school as closed
+            # (same OPEID6, within a year, dated before the tracker's as-of
+            # date). Possible mergers (IPEDS
+            # STATUS=C) still go to editors.
+            tracker_note = (f"Hechinger tracker (as of Feb. 2025) counted {tracker_row.get('school_name', '')} "
+                            f"as closed in {tracker_row['year_of_closure']}")
+            review_required = "false"
+            review_status = AUTO_REVIEW_STATUS
+            location_ceased = "true"
+            operations_basis = tracker_note
+            parent_continued = "false"
+            parent_basis = tracker_note
+            review_reasons = [x for x in review_reasons if x != "operational_closure_unverified"]
+            review_reasons.append("hechinger_tracker_confirmed")
+            if is_main:
+                closure_type = ("for_profit_closure" if (control == "for-profit" or (
+                    not control and "for profit" in tracker_row.get("school_type", "").lower()))
+                    else "institutional_closure")
+                publication_decision = "include_institution"
+                basis = f"{tracker_note}; main campus closed"
+            else:
+                # The tracker counted the school once; its locations are
+                # covered by that institution row.
+                closure_type = "location_closed_with_institution"
+                publication_decision = "exclude"
+                basis = f"{tracker_note}; location closed with the school, counted once via the institution"
         elif auto:
             review_reasons.append("new_since_baseline")
             basis = f"{basis}; meets automatic standard but is new since the base table — editor must confirm"
@@ -903,6 +967,10 @@ def main(argv: list[str] | None = None) -> int:
              "Refuses to overwrite an existing baseline.",
     )
     parser.add_argument(
+        "--hechinger-tracker-csv", type=Path, default=HECHINGER_TRACKER_DEFAULT,
+        help=f"Hechinger tracker snapshot, base table only (default: {HECHINGER_TRACKER_DEFAULT})",
+    )
+    parser.add_argument(
         "--fh-closures-csv", type=Path, default=FH_CLOSURES_DEFAULT,
         help=f"Financial Health tracker confirmed closures (default: {FH_CLOSURES_DEFAULT})",
     )
@@ -986,6 +1054,8 @@ def main(argv: list[str] | None = None) -> int:
               + ("" if auto_baseline else " (none — every candidate requires review)"))
 
     fh_closures = _load_fh_closures(args.fh_closures_csv)
+    hechinger_tracker = _load_hechinger_tracker(args.hechinger_tracker_csv)
+    print(f"Hechinger tracker closures (base table only): {sum(map(len, hechinger_tracker.values())):,}")
     print(f"Financial Health confirmed institution closures: {sum(map(len, fh_closures.values())):,}"
           + ("" if fh_closures else f" (none — {args.fh_closures_csv} missing or empty)"))
 
@@ -999,6 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
         rt01_by_opeid6=rt01_by_opeid6,
         auto_baseline=auto_baseline,
         fh_closures=fh_closures,
+        hechinger_tracker=hechinger_tracker,
     )
 
     if args.freeze_auto_baseline:

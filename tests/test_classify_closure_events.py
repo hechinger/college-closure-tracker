@@ -1043,3 +1043,89 @@ class TestTerritoryScope:
     def test_us_territory_stays_in_scope(self):
         r = classify_records([_rec(state="GU")], auto_baseline=frozenset())[0]
         assert r["closure_type"] != "foreign_location"
+
+
+class TestHechingerTrackerBaseTable:
+    """Base-table schools Hechinger's tracker already counted are auto-resolved."""
+
+    _TRACKER = {"001002": [{"opeid6": "001002", "school_name": "Test College", "school_type": "Private, for profit",
+                            "year_of_closure": "2019"}]}
+    _RT01 = {"001002": [
+        {"opeid8": "00100200", "close_date_iso": "2018-06-01", "reinstate_date_iso": ""},
+        {"opeid8": "00100201", "close_date_iso": "", "reinstate_date_iso": ""},
+    ]}
+    _BASE = frozenset({"fsa:00100200:2018-06-01", "fsa:00100201:2018-06-01"})
+
+    def _unresolved_main(self, **kw):
+        d = dict(closed_date_iso="2018-06-01", closed_year="2018", match_method="unmatched",
+                 control_label="", is_traditional_college="false", unitid="")
+        d.update(kw)
+        return _rec(**d)
+
+    def test_tracker_school_published_as_institution(self):
+        r = classify_records([self._unresolved_main()], rt01_by_opeid6=self._RT01,
+                             auto_baseline=self._BASE, hechinger_tracker=self._TRACKER)[0]
+        assert r["review_status"] == AUTO_REVIEW_STATUS and r["review_required"] == "false"
+        assert r["publication_decision"] == "include_institution"
+        assert r["closure_type"] == "for_profit_closure"      # from tracker school type
+        assert "hechinger_tracker_confirmed" in r["review_reason"]
+        assert "Hechinger tracker" in r["closure_type_basis"]
+
+    def test_tracker_location_counted_once_via_institution(self):
+        # Own IPEDS record, parent stopped reporting, no nearby main close:
+        # the case that used to sit in the queue as ipeds_parent_inactive_after_closure.
+        rt01 = {"001002": [
+            {"opeid8": "00100201", "close_date_iso": "2018-06-01", "reinstate_date_iso": ""},
+            {"opeid8": "00100202", "close_date_iso": "", "reinstate_date_iso": ""},
+        ]}
+        loc = _rec(opeid8="00100201", location_suffix="01", is_main_campus="false", closed_date_iso="2018-06-01",
+                   closed_year="2018", match_method="matched_opeid8_yr2017", iclevel="1",
+                   ipeds_opeid6_last_year="2017", ipeds_cache_max_year="2025")
+        without = classify_records([loc], rt01_by_opeid6=rt01, auto_baseline=self._BASE)[0]
+        assert "ipeds_parent_inactive_after_closure" in without["review_reason"]
+        r = classify_records([loc], rt01_by_opeid6=rt01, auto_baseline=self._BASE,
+                             hechinger_tracker=self._TRACKER)[0]
+        assert r["publication_decision"] == "exclude"
+        assert r["closure_type"] == "location_closed_with_institution"
+
+    def test_not_limited_to_frozen_auto_baseline(self):
+        # Pending rows were never auto-eligible, so they are not in the frozen
+        # list; the tracker's as-of date is the gate instead.
+        r = classify_records([self._unresolved_main()], rt01_by_opeid6=self._RT01,
+                             auto_baseline=frozenset(), hechinger_tracker=self._TRACKER)[0]
+        assert r["review_status"] == AUTO_REVIEW_STATUS
+
+    def test_closures_after_tracker_date_ignore_tracker(self):
+        rt01 = {"001002": [{"opeid8": "00100200", "close_date_iso": "2025-06-01", "reinstate_date_iso": ""}]}
+        late = {"001002": [dict(self._TRACKER["001002"][0], year_of_closure="2024")]}
+        r = classify_records([self._unresolved_main(closed_date_iso="2025-06-01", closed_year="2025")],
+                             rt01_by_opeid6=rt01, auto_baseline=frozenset(), hechinger_tracker=late)[0]
+        assert r["review_required"] == "true"
+        assert "hechinger_tracker_confirmed" not in r["review_reason"]
+
+    def test_year_mismatch_stays_in_review(self):
+        far = {"001002": [dict(self._TRACKER["001002"][0], year_of_closure="2023")]}
+        r = classify_records([self._unresolved_main()], rt01_by_opeid6=self._RT01,
+                             auto_baseline=self._BASE, hechinger_tracker=far)[0]
+        assert r["review_required"] == "true"
+
+    def test_possible_merger_stays_with_editors(self):
+        r = classify_records([self._unresolved_main(ipeds_combined_after_closure="true")],
+                             rt01_by_opeid6=self._RT01, auto_baseline=self._BASE,
+                             hechinger_tracker=self._TRACKER)[0]
+        assert r["review_required"] == "true"
+        assert "ipeds_status_combined_with_other_institution" in r["review_reason"]
+
+    def test_editor_decision_still_wins(self, tmp_path):
+        ov = {"fsa:00100200:2018-06-01": {"closure_type": "merger_absorption", "closure_type_basis": "b",
+                                          "publication_decision": "exclude", "review_status": "resolved"}}
+        r = classify_records([self._unresolved_main()], rt01_by_opeid6=self._RT01, overrides=ov,
+                             auto_baseline=self._BASE, hechinger_tracker=self._TRACKER)[0]
+        assert r["closure_type"] == "merger_absorption" and r["publication_decision"] == "exclude"
+
+    def test_load_tracker(self, tmp_path):
+        from classify_closure_events import _load_hechinger_tracker
+        p = tmp_path / "t.csv"
+        p.write_text("opeid6,school_name,state,school_type,program_length,year_of_closure\n"
+                     "41221,A,Texas,Private,Short,2008\n,B,Ohio,Public,2-year,2010\n", encoding="utf-8")
+        assert set(_load_hechinger_tracker(p)) == {"041221"}
